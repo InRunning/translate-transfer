@@ -155,3 +155,5 @@ yarn-error.log*
 # 如果有本地配置文件，可以添加到这里
 local_config.json
 secrets.json
+ref-docs/
+local.yaml

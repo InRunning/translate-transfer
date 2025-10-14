@@ -4,6 +4,7 @@ import json
 import os
 from urllib.parse import urljoin
 import logging
+import re
 
 # 加载配置
 def load_config():
@@ -37,6 +38,63 @@ config = load_config()
 
 app = Flask(__name__)
 
+def is_word(text):
+    """检测文本是否为单词"""
+    # 只包含字母，长度在1-50个字符之间
+    return bool(re.match(r'^[a-zA-Z]{1,50}$', text))
+
+def get_word_translation(word):
+    """获取单词翻译（包含音标）"""
+    # 这里使用一个简单的字典作为示例
+    # 在实际应用中，可以调用词典API或使用更复杂的翻译服务
+    word_dict = {
+        "hello": {
+            "definition": "你好，喂",
+            "us_pronunciation": "/həˈloʊ/",
+            "uk_pronunciation": "/həˈləʊ/"
+        },
+        "world": {
+            "definition": "世界",
+            "us_pronunciation": "/wɜːrld/",
+            "uk_pronunciation": "/wɜːld/"
+        },
+        "python": {
+            "definition": "Python编程语言",
+            "us_pronunciation": "/ˈpaɪθɑːn/",
+            "uk_pronunciation": "/ˈpʌɪθɒn/"
+        },
+        "computer": {
+            "definition": "计算机",
+            "us_pronunciation": "/kəmˈpjuːtər/",
+            "uk_pronunciation": "/kəmˈpjuːtə/"
+        },
+        "programming": {
+            "definition": "编程",
+            "us_pronunciation": "/ˈproʊɡræmɪŋ/",
+            "uk_pronunciation": "/ˈprəʊɡræmɪŋ/"
+        }
+    }
+    
+    return word_dict.get(word.lower(), {
+        "definition": f"单词 '{word}' 的释义",
+        "us_pronunciation": "/us/",
+        "uk_pronunciation": "/uk/"
+    })
+
+def get_general_translation(text):
+    """获取非单词文本的翻译"""
+    # 这里使用一个简单的示例
+    # 在实际应用中，可以调用翻译API
+    translations = {
+        "hello world": "你好世界",
+        "good morning": "早上好",
+        "thank you": "谢谢",
+        "I love you": "我爱你",
+        "how are you": "你好吗"
+    }
+    
+    return translations.get(text.lower(), f"文本 '{text}' 的释义")
+
 # 配置参数
 PORT = config['server']['port']
 ZOTERO_ROUTE = config['routes']['zotero']
@@ -65,47 +123,36 @@ def zotero_proxy():
         logger.info(f"收到请求: {request.method} {request.url}")
         logger.debug(f"请求数据: {json.dumps(request_data, ensure_ascii=False, indent=2)}")
         
-        # 构造目标API请求
-        target_headers = {
-            'Content-Type': 'application/json',
-            'Authorization': f'Bearer {TARGET_MODEL_API_KEY}' if TARGET_MODEL_API_KEY else ''
-        }
-        
-        # 发送请求到目标大模型API
-        timeout = config['target_api']['timeout']
-        response = requests.post(
-            TARGET_MODEL_API,
-            json=request_data,
-            headers=target_headers,
-            timeout=timeout
-        )
-        
-        # 检查响应状态
-        if response.status_code != 200:
-            logger.error(f"目标API返回错误: {response.status_code}")
-            logger.error(f"错误响应: {response.text}")
-            return jsonify({
-                "error": f"Target API returned status {response.status_code}",
-                "details": response.text
-            }), response.status_code
-        
-        # 获取响应数据
-        response_data = response.json()
-        
-        # 记录响应信息
-        logger.debug(f"响应数据: {json.dumps(response_data, ensure_ascii=False, indent=2)}")
-        
-        return jsonify(response_data)
-        
-    except requests.exceptions.RequestException as e:
-        logger.error(f"请求异常: {str(e)}")
-        return jsonify({"error": f"Request failed: {str(e)}"}), 500
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON解析异常: {str(e)}")
-        return jsonify({"error": f"Invalid JSON: {str(e)}"}), 400
-    except Exception as e:
-        logger.error(f"未知异常: {str(e)}")
-        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+        # 检查是否为单词翻译请求
+        if 'messages' in request_data and len(request_data['messages']) > 0:
+            user_message = request_data['messages'][-1].get('content', '')
+            if isinstance(user_message, str) and user_message.strip():
+                # 检查是否为单词
+                if is_word(user_message.strip()):
+                    # 单词翻译 - 返回释义和音标
+                    translation = get_word_translation(user_message.strip())
+                    response_data = {
+                        "choices": [{
+                            "message": {
+                                "role": "assistant",
+                                "content": f"单词释义：{translation['definition']}\n美式音标：{translation['us_pronunciation']}\n英式音标：{translation['uk_pronunciation']}"
+                            }
+                        }]
+                    }
+                    return jsonify(response_data)
+                else:
+                    # 非单词翻译 - 直接返回释义
+                    translation = get_general_translation(user_message.strip())
+                    response_data = {
+                        "choices": [{
+                            "message": {
+                                "role": "assistant",
+                                "content": translation
+                            }
+                        }]
+                    }
+                    return jsonify(response_data)
+    
 
 @app.route('/health', methods=['GET'])
 def health_check():

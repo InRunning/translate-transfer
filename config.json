@@ -1,0 +1,24 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 10283,
+    "debug": true,
+    "threaded": true
+  },
+  "routes": {
+    "zotero": "/zotero",
+    "health": "/health",
+    "index": "/"
+  },
+  "target_api": {
+    "url": "https://api.openai.com/v1/chat/completions",
+    "timeout": 30,
+    "headers": {
+      "Content-Type": "application/json"
+    }
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  }
+}

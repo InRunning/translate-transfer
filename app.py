@@ -3,6 +3,7 @@ import requests
 import json
 import os
 import re
+import yaml
 
 def load_config():
     try:
@@ -14,7 +15,15 @@ def load_config():
             "routes": {"zotero": "/zotero", "health": "/health", "index": "/"}
         }
 
+def load_api_config():
+    try:
+        with open('local.yaml', 'r', encoding='utf-8') as f:
+            return yaml.safe_load(f)
+    except FileNotFoundError:
+        return None
+
 config = load_config()
+api_config = load_api_config()
 app = Flask(__name__)
 
 def is_word(text):
@@ -29,7 +38,7 @@ def call_deepseek_api(text, is_word_input):
         system_prompt = "你是一个智能翻译助手，下面是句子，请给出该句子的释义。示例：输入：I want to go home 输出: 我想回家 ."
     
     payload = {
-        "model": "DeepSeek-V3",
+        "model": api_config['Relay']['Model'] if api_config else "DeepSeek-V3",
         "stream": False,
         "messages": [
             {"role": "system", "content": system_prompt},
@@ -37,18 +46,16 @@ def call_deepseek_api(text, is_word_input):
         ]
     }
     
+    api_key = api_config['Relay']['ApiKey'] if api_config else os.getenv('DEEPSEEK_API_KEY', '')
+    url = api_config['Relay']['Url'] if api_config else "https://api.modelarts-maas.com/v1/chat/completions"
+    
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {os.getenv('DEEPSEEK_API_KEY', '')}"
+        "Authorization": f"Bearer {api_key}"
     }
     
     try:
-        response = requests.post(
-            "https://api.modelarts-maas.com/v1/chat/completions",
-            headers=headers,
-            json=payload,
-            timeout=30
-        )
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
         return response.json()
     except Exception as e:
         return {"error": str(e)}

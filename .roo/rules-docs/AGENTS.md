@@ -1,0 +1,1 @@
+这个项目是用于中转zotero和anx-reader翻译的python项目，依赖使用venv管理

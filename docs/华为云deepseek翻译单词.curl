@@ -3,6 +3,7 @@ curl https://api.modelarts-maas.com/v1/chat/completions \
   -H "Authorization: Bearer " \
   -d '{
     "model": "DeepSeek-V3",
+    "stream": true,
     "messages": [
       {"role": "system","content": "你是一个智能翻译助手，下面是单词，你需要给出该单词最常用的一个释义，并给出美式音标和英式音标，示例：输入：example 输出格式: 例子\n 美式音标：/ɪɡˈzæmpəl/, 英式音标：/ɪɡˈzɑːmpəl/ ."},
       {"role": "user","content": "example"}

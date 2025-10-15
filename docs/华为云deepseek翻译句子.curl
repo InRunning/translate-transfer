@@ -1,0 +1,10 @@
+curl https://api.modelarts-maas.com/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer " \
+  -d '{
+    "model": "DeepSeek-V3",
+    "messages": [
+      {"role": "system","content": "你是一个智能翻译助手，下面是句子，请给出该句子的释义。示例：输入：I want to go home 输出: 我想回家 ."},
+      {"role": "user","content": "Any responsive modifier causes the utility to take effect at the specified screen width or any larger screen width."}
+    ]
+  }'

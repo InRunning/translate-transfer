@@ -1,0 +1,12 @@
+{
+    "id": "chat-d1e098034bb948fbb151ed76fd7151e7",
+    "object": "chat.completion.chunk",
+    "created": 1760527057,
+    "model": "DeepSeek-V3",
+    "choices": [],
+    "usage": {
+        "prompt_tokens": 55,
+        "total_tokens": 72,
+        "completion_tokens": 17
+    }
+}

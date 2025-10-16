@@ -3,7 +3,7 @@ curl -X POST http://127.0.0.1:10283/zotero \
   -d '{
     "model": "",
     "messages": [
-      {"role": "user", "content": "single"}
+      {"role": "user", "content": "first"}
     ],
     "temperature": 0,
     "stream": true

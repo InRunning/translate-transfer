@@ -199,8 +199,11 @@ def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Respo
         payload: 要发送的请求数据
         word: 要翻译的单词，如果提供则先检查缓存
     """
-    # 如果是单词翻译，先检查缓存
-    if word:
+    # 检查缓存是否启用
+    cache_enabled = api_config and api_config.get('Relay', {}).get('Cache', True)
+    
+    # 如果是单词翻译且缓存启用，先检查缓存
+    if word and cache_enabled:
         cached_result = get_cached_word(word)
         if cached_result:
             # 返回缓存的翻译结果
@@ -247,65 +250,6 @@ def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Respo
 
         # 流式：逐块透传上游字节，过滤掉 choices 为空的响应
         if want_stream:
-            # 如果是单词翻译，先检查缓存
-            if word:
-                cached_result = get_cached_word(word)
-                if cached_result:
-                    # 返回缓存的翻译结果（流式格式）
-                    def generate_cached():
-                        # 发送开始数据
-                        start_data = {
-                            "id": "cached-" + word,
-                            "object": "chat.completion.chunk",
-                            "created": 1234567890,
-                            "model": "cached-model",
-                            "choices": [{
-                                "index": 0,
-                                "delta": {"role": "assistant"},
-                                "finish_reason": None
-                            }]
-                        }
-                        yield f"data: {json.dumps(start_data, ensure_ascii=False)}\n\n".encode('utf-8')
-                        
-                        # 发送翻译内容
-                        content = f"{cached_result['definition']}\n美式音标：{cached_result['us_phonetic'] or 'N/A'}, 英式音标：{cached_result['uk_phonetic'] or 'N/A'}"
-                        content_chunks = [content[i:i+50] for i in range(0, len(content), 50)]  # 分块发送
-                        
-                        for chunk in content_chunks:
-                            chunk_data = {
-                                "id": "cached-" + word,
-                                "object": "chat.completion.chunk",
-                                "created": 1234567890,
-                                "model": "cached-model",
-                                "choices": [{
-                                    "index": 0,
-                                    "delta": {"content": chunk},
-                                    "finish_reason": None
-                                }]
-                            }
-                            yield f"data: {json.dumps(chunk_data, ensure_ascii=False)}\n\n".encode('utf-8')
-                        
-                        # 发送结束数据
-                        end_data = {
-                            "id": "cached-" + word,
-                            "object": "chat.completion.chunk",
-                            "created": 1234567890,
-                            "model": "cached-model",
-                            "choices": [{
-                                "index": 0,
-                                "delta": {},
-                                "finish_reason": "stop"
-                            }]
-                        }
-                        yield f"data: {json.dumps(end_data, ensure_ascii=False)}\n\n".encode('utf-8')
-                        yield f"data: [DONE]\n\n".encode('utf-8')
-                    
-                    return Response(
-                        stream_with_context(generate_cached()),
-                        status=200,
-                        content_type='text/event-stream'
-                    )
-            
             # 如果没有缓存，继续正常的流式处理
             translation_buffer = ""  # 用于累积翻译内容
             
@@ -348,8 +292,8 @@ def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Respo
                     error_chunk = f"data: {json.dumps({'error': f'Stream error: {str(e)}'})}\n\n"
                     yield error_chunk.encode('utf-8')
                 finally:
-                    # 流式结束后，如果有单词且没有缓存，则缓存结果
-                    if word and translation_buffer and not get_cached_word(word):
+                    # 流式结束后，如果有单词且缓存启用且没有缓存，则缓存结果
+                    if word and translation_buffer and cache_enabled and not get_cached_word(word):
                         # 解析翻译结果，提取释义、美式音标、英式音标
                         definition, us_phonetic, uk_phonetic = parse_translation_result(translation_buffer, word)
                         if definition:
@@ -368,8 +312,8 @@ def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Respo
             response_data = upstream.json()
             # 检查 choices 是否为空
             if response_data.get('choices') and len(response_data['choices']) > 0:
-                # 如果是单词翻译且没有缓存，则缓存结果
-                if word and not get_cached_word(word):
+                # 如果是单词翻译且缓存启用且没有缓存，则缓存结果
+                if word and cache_enabled and not get_cached_word(word):
                     assistant_message = response_data['choices'][0]['message']['content']
                     # 解析翻译结果，提取释义、美式音标、英式音标
                     definition, us_phonetic, uk_phonetic = parse_translation_result(assistant_message, word)
@@ -403,6 +347,90 @@ def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Respo
     except Exception as e:
         return Response(json.dumps({"error": str(e)}, ensure_ascii=False), status=500, content_type='application/json')
 
+@app.route('/zotero/json', methods=['POST'])
+def zotero_json_proxy():
+    """Zotero 代理端点（非流式JSON响应）
+    
+    这个端点总是返回标准的JSON响应，兼容Apifox等工具。
+    """
+    try:
+        # 记录原始请求内容用于调试
+        raw_content = request.get_data(as_text=True)
+        print(f"Zotero JSON 原始请求内容: {raw_content}")
+        print(f"请求 Content-Type: {request.content_type}")
+        
+        # 检查 Content-Type
+        content_type = request.content_type or ''
+        if 'application/json' not in content_type:
+            print(f"警告: Content-Type 不是 application/json: {content_type}")
+        
+        request_data = request.get_json(silent=True)
+        if request_data is None:
+            # 详细说明JSON解析失败的原因
+            error_msg = f"请求中不包含有效的 JSON。原始内容: {raw_content[:200]}..."
+            print(f"JSON解析失败: {error_msg}")
+            return jsonify({
+                "error": error_msg,
+                "details": "请检查请求格式是否正确",
+                "hint": "确保请求头包含 'Content-Type: application/json'"
+            }), 400
+        
+        if not isinstance(request_data, dict):
+            return jsonify({"error": f"Invalid request data type: {type(request_data)}"}), 400
+
+        print(f"解析后的请求数据: {request_data}")
+
+        messages = request_data.get('messages') or []
+        print(f"Messages 数量: {len(messages)}")
+        
+        # 尝试从最后一条 user 消息中取文本
+        user_message_text: Optional[str] = None
+        for i, msg in enumerate(reversed(messages)):
+            print(f"检查消息 {i}: {msg}")
+            if isinstance(msg, dict) and msg.get('role') == 'user':
+                user_message_text = (msg.get('content') or '').strip()
+                print(f"找到用户消息: '{user_message_text}'")
+                break
+
+        if not user_message_text:
+            return jsonify({
+                "error": "Empty message",
+                "details": "无法从请求中提取有效的用户消息内容",
+                "messages": messages
+            }), 400
+
+        # 根据词/句选择提示词
+        is_word_input = is_word(user_message_text)
+        print(f"是否为单词输入: {is_word_input}, 文本: '{user_message_text}'")
+
+        # 构造转发payload（强制非流式）
+        outgoing = build_outgoing_payload(request_data, is_word_input)
+        
+        # 强制设置为非流式
+        outgoing['stream'] = False
+        
+        # 验证构造的payload
+        if not outgoing.get('model'):
+            outgoing['model'] = "DeepSeek-V3"  # 确保有有效的模型名称
+        
+        if not outgoing.get('messages'):
+            return jsonify({"error": "Invalid messages format", "details": "构造的payload中缺少messages"}), 400
+
+        print(f"构造的payload (非流式): {outgoing}")
+
+        # 代理到上游并返回非流式响应
+        return proxy_deepseek(outgoing, user_message_text if is_word_input else None)
+
+    except Exception as e:
+        import traceback
+        error_details = f"Zotero JSON 代理错误: {str(e)}\n{traceback.format_exc()}"
+        print(error_details)
+        return jsonify({
+            "error": str(e),
+            "details": "服务器内部错误",
+            "traceback": error_details
+        }), 500
+
 @app.route(config['routes']['zotero'], methods=['POST'])
 def zotero_proxy():
     """Zotero 代理端点
@@ -412,23 +440,54 @@ def zotero_proxy():
     - 响应体保持与上游一致的数据结构与Content-Type。
     """
     try:
+        # 记录原始请求内容用于调试
+        raw_content = request.get_data(as_text=True)
+        print(f"Zotero 原始请求内容: {raw_content}")
+        print(f"请求 Content-Type: {request.content_type}")
+        
+        # 检查 Content-Type
+        content_type = request.content_type or ''
+        if 'application/json' not in content_type:
+            print(f"警告: Content-Type 不是 application/json: {content_type}")
+        
         request_data = request.get_json(silent=True)
+        if request_data is None:
+            # 详细说明JSON解析失败的原因
+            error_msg = f"请求中不包含有效的 JSON。原始内容: {raw_content[:200]}..."
+            print(f"JSON解析失败: {error_msg}")
+            return jsonify({
+                "error": error_msg,
+                "details": "请检查请求格式是否正确",
+                "hint": "确保请求头包含 'Content-Type: application/json'"
+            }), 400
+        
         if not isinstance(request_data, dict):
-            return jsonify({"error": "Invalid request"}), 400
+            return jsonify({"error": f"Invalid request data type: {type(request_data)}"}), 400
+
+        print(f"解析后的请求数据: {request_data}")
 
         messages = request_data.get('messages') or []
+        print(f"Messages 数量: {len(messages)}")
+        
         # 尝试从最后一条 user 消息中取文本
         user_message_text: Optional[str] = None
-        for msg in reversed(messages):
+        for i, msg in enumerate(reversed(messages)):
+            print(f"检查消息 {i}: {msg}")
             if isinstance(msg, dict) and msg.get('role') == 'user':
                 user_message_text = (msg.get('content') or '').strip()
+                print(f"找到用户消息: '{user_message_text}'")
                 break
 
         if not user_message_text:
-            return jsonify({"error": "Empty message"}), 400
+            return jsonify({
+                "error": "Empty message",
+                "details": "无法从请求中提取有效的用户消息内容",
+                "messages": messages
+            }), 400
 
         # 根据词/句选择提示词
         is_word_input = is_word(user_message_text)
+        print(f"是否为单词输入: {is_word_input}, 文本: '{user_message_text}'")
 
         # 构造转发payload（尽量透传原始字段）
         outgoing = build_outgoing_payload(request_data, is_word_input)
@@ -438,13 +497,22 @@ def zotero_proxy():
             outgoing['model'] = "DeepSeek-V3"  # 确保有有效的模型名称
         
         if not outgoing.get('messages'):
-            return jsonify({"error": "Invalid messages format"}), 400
+            return jsonify({"error": "Invalid messages format", "details": "构造的payload中缺少messages"}), 400
+
+        print(f"构造的payload: {outgoing}")
 
         # 代理到上游并按需流式输出，如果是单词则传递单词参数
         return proxy_deepseek(outgoing, user_message_text if is_word_input else None)
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        import traceback
+        error_details = f"Zotero 代理错误: {str(e)}\n{traceback.format_exc()}"
+        print(error_details)
+        return jsonify({
+            "error": str(e),
+            "details": "服务器内部错误",
+            "traceback": error_details
+        }), 500
 
 @app.route(config['routes']['anx_reader'], methods=['POST'])
 def anx_reader_proxy():
@@ -455,32 +523,79 @@ def anx_reader_proxy():
     - 响应体保持与上游一致的数据结构与Content-Type。
     """
     try:
+        # 记录原始请求内容用于调试
+        raw_content = request.get_data(as_text=True)
+        print(f"Anx-Reader 原始请求内容: {raw_content}")
+        print(f"请求 Content-Type: {request.content_type}")
+        
+        # 检查 Content-Type
+        content_type = request.content_type or ''
+        if 'application/json' not in content_type:
+            print(f"警告: Content-Type 不是 application/json: {content_type}")
+        
         request_data = request.get_json(silent=True)
+        if request_data is None:
+            # 详细说明JSON解析失败的原因
+            error_msg = f"请求中不包含有效的 JSON。原始内容: {raw_content[:200]}..."
+            print(f"JSON解析失败: {error_msg}")
+            return jsonify({
+                "error": error_msg,
+                "details": "请检查请求格式是否正确",
+                "hint": "确保请求头包含 'Content-Type: application/json'"
+            }), 400
+        
         if not isinstance(request_data, dict):
-            return jsonify({"error": "Invalid request"}), 400
+            return jsonify({"error": f"Invalid request data type: {type(request_data)}"}), 400
+
+        print(f"解析后的请求数据: {request_data}")
 
         messages = request_data.get('messages') or []
+        print(f"Messages 数量: {len(messages)}")
+        
         # 尝试从最后一条 user 消息中取文本
         user_message_text: Optional[str] = None
-        for msg in reversed(messages):
+        for i, msg in enumerate(reversed(messages)):
+            print(f"检查消息 {i}: {msg}")
             if isinstance(msg, dict) and msg.get('role') == 'user':
                 user_message_text = (msg.get('content') or '').strip()
+                print(f"找到用户消息: '{user_message_text}'")
                 break
 
         if not user_message_text:
-            return jsonify({"error": "Empty message"}), 400
+            return jsonify({
+                "error": "Empty message",
+                "details": "无法从请求中提取有效的用户消息内容",
+                "messages": messages
+            }), 400
 
         # 根据词/句选择提示词
         is_word_input = is_word(user_message_text)
+        print(f"是否为单词输入: {is_word_input}, 文本: '{user_message_text}'")
 
         # 构造转发payload（尽量透传原始字段）
         outgoing = build_outgoing_payload(request_data, is_word_input)
+        
+        # 验证构造的payload
+        if not outgoing.get('model'):
+            outgoing['model'] = "DeepSeek-V3"  # 确保有有效的模型名称
+        
+        if not outgoing.get('messages'):
+            return jsonify({"error": "Invalid messages format", "details": "构造的payload中缺少messages"}), 400
+
+        print(f"构造的payload: {outgoing}")
 
         # 代理到上游并按需流式输出，如果是单词则传递单词参数
         return proxy_deepseek(outgoing, user_message_text if is_word_input else None)
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        import traceback
+        error_details = f"Anx-Reader 代理错误: {str(e)}\n{traceback.format_exc()}"
+        print(error_details)
+        return jsonify({
+            "error": str(e),
+            "details": "服务器内部错误",
+            "traceback": error_details
+        }), 500
 
 @app.route('/health', methods=['GET'])
 def health_check():

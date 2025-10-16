@@ -6,6 +6,7 @@ import os
 import re
 import yaml
 import sqlite3
+import time
 from typing import Any, Dict, List, Optional
 
 def load_config():
@@ -206,20 +207,89 @@ def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Respo
     if word and cache_enabled:
         cached_result = get_cached_word(word)
         if cached_result:
-            # 返回缓存的翻译结果
-            response_data = {
-                "choices": [{
-                    "message": {
-                        "role": "assistant",
-                        "content": f"{cached_result['definition']}\n美式音标：{cached_result['us_phonetic'] or 'N/A'}, 英式音标：{cached_result['uk_phonetic'] or 'N/A'}"
+            # 构建缓存内容
+            cache_content = f"{cached_result['definition']}\n美式音标：{cached_result['us_phonetic'] or 'N/A'}, 英式音标：{cached_result['uk_phonetic'] or 'N/A'}"
+            
+            # 检查是否需要流式响应
+            want_stream = bool(payload.get('stream'))
+            
+            if want_stream:
+                # 流式响应：模拟LLM的流式输出
+                def generate():
+                    # 生成初始chunk（包含id等基本信息）
+                    initial_chunk = {
+                        "id": f"chat-{os.urandom(4).hex()}",
+                        "object": "chat.completion.chunk",
+                        "created": int(time.time()),
+                        "model": payload.get('model', 'DeepSeek-V3'),
+                        "choices": [{
+                            "index": 0,
+                            "delta": {"content": ""},
+                            "logprobs": None,
+                            "finish_reason": None
+                        }],
+                        "usage": {"prompt_tokens": 0, "total_tokens": 0, "completion_tokens": 0}
                     }
-                }]
-            }
-            return Response(
-                json.dumps(response_data, ensure_ascii=False),
-                status=200,
-                content_type='application/json'
-            )
+                    yield f"data: {json.dumps(initial_chunk, ensure_ascii=False)}\n\n".encode('utf-8')
+                    
+                    # 逐字符输出内容
+                    for char in cache_content:
+                        chunk = {
+                            "id": initial_chunk["id"],
+                            "object": "chat.completion.chunk",
+                            "created": initial_chunk["created"],
+                            "model": initial_chunk["model"],
+                            "choices": [{
+                                "index": 0,
+                                "delta": {"content": char},
+                                "logprobs": None,
+                                "finish_reason": None
+                            }],
+                            "usage": {"prompt_tokens": 0, "total_tokens": 0, "completion_tokens": 0}
+                        }
+                        yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n".encode('utf-8')
+                    
+                    # 生成结束chunk
+                    final_chunk = {
+                        "id": initial_chunk["id"],
+                        "object": "chat.completion.chunk",
+                        "created": initial_chunk["created"],
+                        "model": initial_chunk["model"],
+                        "choices": [{
+                            "index": 0,
+                            "delta": {"content": ""},
+                            "logprobs": None,
+                            "finish_reason": "stop",
+                            "stop_reason": None
+                        }],
+                        "usage": {
+                            "prompt_tokens": 78,
+                            "total_tokens": 106,
+                            "completion_tokens": len(cache_content)
+                        }
+                    }
+                    yield f"data: {json.dumps(final_chunk, ensure_ascii=False)}\n\n".encode('utf-8')
+                
+                return Response(
+                    stream_with_context(generate()),
+                    status=200,
+                    content_type='text/event-stream'
+                )
+            else:
+                # 非流式响应：保持原有逻辑
+                response_data = {
+                    "choices": [{
+                        "message": {
+                            "role": "assistant",
+                            "content": cache_content
+                        }
+                    }]
+                }
+                return Response(
+                    json.dumps(response_data, ensure_ascii=False),
+                    status=200,
+                    content_type='application/json'
+                )
     
     api_key = (api_config and api_config.get('Relay', {}).get('ApiKey')) or os.getenv('DEEPSEEK_API_KEY', '')
     url = (api_config and api_config.get('Relay', {}).get('Url')) or "https://api.modelarts-maas.com/v1/chat/completions"
@@ -253,7 +323,7 @@ def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Respo
             # 如果没有缓存，继续正常的流式处理
             translation_buffer = ""  # 用于累积翻译内容
             
-            def generate():
+            def generate_stream():
                 nonlocal translation_buffer
                 try:
                     buffer = b""
@@ -302,7 +372,7 @@ def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Respo
                     upstream.close()
 
             return Response(
-                stream_with_context(generate()),
+                stream_with_context(generate_stream()),
                 status=200,
                 content_type=upstream.headers.get('Content-Type', 'text/event-stream')
             )

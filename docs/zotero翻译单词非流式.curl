@@ -1,4 +1,4 @@
-curl -X POST http://127.0.0.1:10283/zotero \
+curl -X POST http://127.0.0.1:10283/zotero/json \
   -H "Content-Type: application/json" \
   -d '{
     "model": "",
@@ -6,5 +6,7 @@ curl -X POST http://127.0.0.1:10283/zotero \
       {"role": "user", "content": "first"}
     ],
     "temperature": 0,
-    "stream": true
+    "stream": false
   }'
+
+

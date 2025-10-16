@@ -7,6 +7,7 @@
   },
   "routes": {
     "zotero": "/zotero",
+    "zotero_json": "/zotero/json",
     "anx_reader": "/anx-reader",
     "health": "/health",
     "index": "/"

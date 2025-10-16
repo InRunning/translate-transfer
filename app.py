@@ -5,6 +5,7 @@ import json
 import os
 import re
 import yaml
+import sqlite3
 from typing import Any, Dict, List, Optional
 
 def load_config():
@@ -27,6 +28,115 @@ def load_api_config():
 config = load_config()
 api_config = load_api_config()
 app = Flask(__name__)
+
+# SQLite 数据库初始化
+def init_db():
+    """初始化 SQLite 数据库，创建单词翻译缓存表"""
+    conn = sqlite3.connect('word_cache.db')
+    cursor = conn.cursor()
+    
+    # 创建单词翻译缓存表
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS word_cache (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            word TEXT UNIQUE NOT NULL,
+            definition TEXT NOT NULL,
+            us_phonetic TEXT,
+            uk_phonetic TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # 创建索引以提高查询性能
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_word ON word_cache(word)')
+    
+    conn.commit()
+    conn.close()
+
+def get_db_connection():
+    """获取数据库连接"""
+    conn = sqlite3.connect('word_cache.db')
+    conn.row_factory = sqlite3.Row  # 返回字典形式的行
+    return conn
+
+def get_cached_word(word: str) -> Optional[Dict[str, str]]:
+    """从缓存中获取单词翻译结果"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        SELECT word, definition, us_phonetic, uk_phonetic
+        FROM word_cache
+        WHERE word = ?
+    ''', (word.lower(),))
+    
+    result = cursor.fetchone()
+    conn.close()
+    
+    if result:
+        return {
+            'word': result['word'],
+            'definition': result['definition'],
+            'us_phonetic': result['us_phonetic'],
+            'uk_phonetic': result['uk_phonetic']
+        }
+    return None
+
+def cache_word_translation(word: str, definition: str, us_phonetic: Optional[str] = None, uk_phonetic: Optional[str] = None):
+    """缓存单词翻译结果"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute('''
+            INSERT OR REPLACE INTO word_cache (word, definition, us_phonetic, uk_phonetic, updated_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ''', (word.lower(), definition, us_phonetic, uk_phonetic))
+        
+        conn.commit()
+        return True
+    except sqlite3.Error as e:
+        print(f"数据库错误: {e}")
+        return False
+    finally:
+        conn.close()
+
+def parse_translation_result(translation_text: str, word: str) -> tuple:
+    """解析翻译结果，提取释义、美式音标、英式音标
+    
+    Args:
+        translation_text: 翻译结果文本
+        word: 原始单词
+        
+    Returns:
+        tuple: (definition, us_phonetic, uk_phonetic)
+    """
+    import re
+    
+    definition = ""
+    us_phonetic = ""
+    uk_phonetic = ""
+    
+    # 提取释义（第一行通常是释义）
+    lines = translation_text.strip().split('\n')
+    if lines:
+        definition = lines[0].strip()
+    
+    # 提取美式音标
+    us_match = re.search(r'美式音标：([^,，]+)', translation_text)
+    if us_match:
+        us_phonetic = us_match.group(1).strip()
+    
+    # 提取英式音标
+    uk_match = re.search(r'英式音标：([^\s,，]+)', translation_text)
+    if uk_match:
+        uk_phonetic = uk_match.group(1).strip()
+    
+    return definition, us_phonetic, uk_phonetic
+
+# 初始化数据库
+init_db()
 
 def is_word(text):
     """检测是否为单词"""
@@ -82,8 +192,32 @@ def build_outgoing_payload(incoming: Dict[str, Any], is_word_input: bool) -> Dic
 
     return outgoing
 
-def proxy_deepseek(payload: Dict[str, Any]) -> Response:
-    """将请求代理到华为云 DeepSeek 接口，透传响应（含流式）。"""
+def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Response:
+    """将请求代理到华为云 DeepSeek 接口，透传响应（含流式）。
+    
+    Args:
+        payload: 要发送的请求数据
+        word: 要翻译的单词，如果提供则先检查缓存
+    """
+    # 如果是单词翻译，先检查缓存
+    if word:
+        cached_result = get_cached_word(word)
+        if cached_result:
+            # 返回缓存的翻译结果
+            response_data = {
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": f"{cached_result['definition']}\n美式音标：{cached_result['us_phonetic'] or 'N/A'}, 英式音标：{cached_result['uk_phonetic'] or 'N/A'}"
+                    }
+                }]
+            }
+            return Response(
+                json.dumps(response_data, ensure_ascii=False),
+                status=200,
+                content_type='application/json'
+            )
+    
     api_key = (api_config and api_config.get('Relay', {}).get('ApiKey')) or os.getenv('DEEPSEEK_API_KEY', '')
     url = (api_config and api_config.get('Relay', {}).get('Url')) or "https://api.modelarts-maas.com/v1/chat/completions"
 
@@ -113,7 +247,70 @@ def proxy_deepseek(payload: Dict[str, Any]) -> Response:
 
         # 流式：逐块透传上游字节，过滤掉 choices 为空的响应
         if want_stream:
+            # 如果是单词翻译，先检查缓存
+            if word:
+                cached_result = get_cached_word(word)
+                if cached_result:
+                    # 返回缓存的翻译结果（流式格式）
+                    def generate_cached():
+                        # 发送开始数据
+                        start_data = {
+                            "id": "cached-" + word,
+                            "object": "chat.completion.chunk",
+                            "created": 1234567890,
+                            "model": "cached-model",
+                            "choices": [{
+                                "index": 0,
+                                "delta": {"role": "assistant"},
+                                "finish_reason": None
+                            }]
+                        }
+                        yield f"data: {json.dumps(start_data, ensure_ascii=False)}\n\n".encode('utf-8')
+                        
+                        # 发送翻译内容
+                        content = f"{cached_result['definition']}\n美式音标：{cached_result['us_phonetic'] or 'N/A'}, 英式音标：{cached_result['uk_phonetic'] or 'N/A'}"
+                        content_chunks = [content[i:i+50] for i in range(0, len(content), 50)]  # 分块发送
+                        
+                        for chunk in content_chunks:
+                            chunk_data = {
+                                "id": "cached-" + word,
+                                "object": "chat.completion.chunk",
+                                "created": 1234567890,
+                                "model": "cached-model",
+                                "choices": [{
+                                    "index": 0,
+                                    "delta": {"content": chunk},
+                                    "finish_reason": None
+                                }]
+                            }
+                            yield f"data: {json.dumps(chunk_data, ensure_ascii=False)}\n\n".encode('utf-8')
+                        
+                        # 发送结束数据
+                        end_data = {
+                            "id": "cached-" + word,
+                            "object": "chat.completion.chunk",
+                            "created": 1234567890,
+                            "model": "cached-model",
+                            "choices": [{
+                                "index": 0,
+                                "delta": {},
+                                "finish_reason": "stop"
+                            }]
+                        }
+                        yield f"data: {json.dumps(end_data, ensure_ascii=False)}\n\n".encode('utf-8')
+                        yield f"data: [DONE]\n\n".encode('utf-8')
+                    
+                    return Response(
+                        stream_with_context(generate_cached()),
+                        status=200,
+                        content_type='text/event-stream'
+                    )
+            
+            # 如果没有缓存，继续正常的流式处理
+            translation_buffer = ""  # 用于累积翻译内容
+            
             def generate():
+                nonlocal translation_buffer
                 try:
                     buffer = b""
                     for chunk in upstream.iter_content(chunk_size=8192):
@@ -132,6 +329,10 @@ def proxy_deepseek(payload: Dict[str, Any]) -> Response:
                                             data = json.loads(data_str)
                                             # 检查 choices 是否为空
                                             if data.get('choices') and len(data['choices']) > 0:
+                                                # 累积翻译内容用于缓存
+                                                if data['choices'][0].get('delta', {}).get('content'):
+                                                    translation_buffer += data['choices'][0]['delta']['content']
+                                                
                                                 yield (line + '\n').encode('utf-8')
                                             # 如果 choices 为空，跳过这个响应块
                                     except json.JSONDecodeError:
@@ -147,6 +348,13 @@ def proxy_deepseek(payload: Dict[str, Any]) -> Response:
                     error_chunk = f"data: {json.dumps({'error': f'Stream error: {str(e)}'})}\n\n"
                     yield error_chunk.encode('utf-8')
                 finally:
+                    # 流式结束后，如果有单词且没有缓存，则缓存结果
+                    if word and translation_buffer and not get_cached_word(word):
+                        # 解析翻译结果，提取释义、美式音标、英式音标
+                        definition, us_phonetic, uk_phonetic = parse_translation_result(translation_buffer, word)
+                        if definition:
+                            cache_word_translation(word, definition, us_phonetic, uk_phonetic)
+                    
                     upstream.close()
 
             return Response(
@@ -160,6 +368,14 @@ def proxy_deepseek(payload: Dict[str, Any]) -> Response:
             response_data = upstream.json()
             # 检查 choices 是否为空
             if response_data.get('choices') and len(response_data['choices']) > 0:
+                # 如果是单词翻译且没有缓存，则缓存结果
+                if word and not get_cached_word(word):
+                    assistant_message = response_data['choices'][0]['message']['content']
+                    # 解析翻译结果，提取释义、美式音标、英式音标
+                    definition, us_phonetic, uk_phonetic = parse_translation_result(assistant_message, word)
+                    if definition:
+                        cache_word_translation(word, definition, us_phonetic, uk_phonetic)
+                
                 return Response(
                     upstream.content,
                     status=upstream.status_code,
@@ -224,8 +440,8 @@ def zotero_proxy():
         if not outgoing.get('messages'):
             return jsonify({"error": "Invalid messages format"}), 400
 
-        # 代理到上游并按需流式输出
-        return proxy_deepseek(outgoing)
+        # 代理到上游并按需流式输出，如果是单词则传递单词参数
+        return proxy_deepseek(outgoing, user_message_text if is_word_input else None)
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -260,8 +476,8 @@ def anx_reader_proxy():
         # 构造转发payload（尽量透传原始字段）
         outgoing = build_outgoing_payload(request_data, is_word_input)
 
-        # 代理到上游并按需流式输出
-        return proxy_deepseek(outgoing)
+        # 代理到上游并按需流式输出，如果是单词则传递单词参数
+        return proxy_deepseek(outgoing, user_message_text if is_word_input else None)
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500

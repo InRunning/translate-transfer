@@ -41,9 +41,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS word_cache (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             word TEXT UNIQUE NOT NULL,
-            definition TEXT NOT NULL,
-            us_phonetic TEXT,
-            uk_phonetic TEXT,
+            translation_result TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
@@ -67,7 +65,7 @@ def get_cached_word(word: str) -> Optional[Dict[str, str]]:
     cursor = conn.cursor()
     
     cursor.execute('''
-        SELECT word, definition, us_phonetic, uk_phonetic
+        SELECT word, translation_result
         FROM word_cache
         WHERE word = ?
     ''', (word.lower(),))
@@ -78,22 +76,20 @@ def get_cached_word(word: str) -> Optional[Dict[str, str]]:
     if result:
         return {
             'word': result['word'],
-            'definition': result['definition'],
-            'us_phonetic': result['us_phonetic'],
-            'uk_phonetic': result['uk_phonetic']
+            'translation_result': result['translation_result']
         }
     return None
 
-def cache_word_translation(word: str, definition: str, us_phonetic: Optional[str] = None, uk_phonetic: Optional[str] = None):
+def cache_word_translation(word: str, translation_result: str):
     """缓存单词翻译结果"""
     conn = get_db_connection()
     cursor = conn.cursor()
     
     try:
         cursor.execute('''
-            INSERT OR REPLACE INTO word_cache (word, definition, us_phonetic, uk_phonetic, updated_at)
-            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ''', (word.lower(), definition, us_phonetic, uk_phonetic))
+            INSERT OR REPLACE INTO word_cache (word, translation_result, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+        ''', (word.lower(), translation_result))
         
         conn.commit()
         return True
@@ -102,39 +98,6 @@ def cache_word_translation(word: str, definition: str, us_phonetic: Optional[str
         return False
     finally:
         conn.close()
-
-def parse_translation_result(translation_text: str, word: str) -> tuple:
-    """解析翻译结果，提取释义、美式音标、英式音标
-    
-    Args:
-        translation_text: 翻译结果文本
-        word: 原始单词
-        
-    Returns:
-        tuple: (definition, us_phonetic, uk_phonetic)
-    """
-    import re
-    
-    definition = ""
-    us_phonetic = ""
-    uk_phonetic = ""
-    
-    # 提取释义（第一行通常是释义）
-    lines = translation_text.strip().split('\n')
-    if lines:
-        definition = lines[0].strip()
-    
-    # 提取美式音标
-    us_match = re.search(r'美式音标：([^,，]+)', translation_text)
-    if us_match:
-        us_phonetic = us_match.group(1).strip()
-    
-    # 提取英式音标
-    uk_match = re.search(r'英式音标：([^\s,，]+)', translation_text)
-    if uk_match:
-        uk_phonetic = uk_match.group(1).strip()
-    
-    return definition, us_phonetic, uk_phonetic
 
 # 初始化数据库
 init_db()
@@ -207,8 +170,8 @@ def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Respo
     if word and cache_enabled:
         cached_result = get_cached_word(word)
         if cached_result:
-            # 构建缓存内容
-            cache_content = f"{cached_result['definition']}\n美式音标：{cached_result['us_phonetic'] or 'N/A'}, 英式音标：{cached_result['uk_phonetic'] or 'N/A'}"
+            # 直接使用缓存内容
+            cache_content = cached_result['translation_result']
             
             # 检查是否需要流式响应
             want_stream = bool(payload.get('stream'))
@@ -364,10 +327,8 @@ def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Respo
                 finally:
                     # 流式结束后，如果有单词且缓存启用且没有缓存，则缓存结果
                     if word and translation_buffer and cache_enabled and not get_cached_word(word):
-                        # 解析翻译结果，提取释义、美式音标、英式音标
-                        definition, us_phonetic, uk_phonetic = parse_translation_result(translation_buffer, word)
-                        if definition:
-                            cache_word_translation(word, definition, us_phonetic, uk_phonetic)
+                        # 直接缓存完整的翻译结果
+                        cache_word_translation(word, translation_buffer)
                     
                     upstream.close()
 
@@ -385,10 +346,8 @@ def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Respo
                 # 如果是单词翻译且缓存启用且没有缓存，则缓存结果
                 if word and cache_enabled and not get_cached_word(word):
                     assistant_message = response_data['choices'][0]['message']['content']
-                    # 解析翻译结果，提取释义、美式音标、英式音标
-                    definition, us_phonetic, uk_phonetic = parse_translation_result(assistant_message, word)
-                    if definition:
-                        cache_word_translation(word, definition, us_phonetic, uk_phonetic)
+                    # 直接缓存完整的翻译结果
+                    cache_word_translation(word, assistant_message)
                 
                 return Response(
                     upstream.content,

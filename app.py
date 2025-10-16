@@ -460,6 +460,16 @@ def zotero_json_proxy():
             if isinstance(msg, dict) and msg.get('role') == 'user':
                 user_message_text = (msg.get('content') or '').strip()
                 print(f"找到用户消息: '{user_message_text}'")
+                
+                # 尝试提取实际的单词文本
+                import re
+                # 查找 sourceText: 后面的内容
+                source_match = re.search(r'sourceText:\s*(.+?)(?:\n|$)', user_message_text)
+                if source_match:
+                    actual_word = source_match.group(1).strip()
+                    print(f"提取到的实际单词: '{actual_word}'")
+                    # 替换用户消息文本为纯单词
+                    user_message_text = actual_word
                 break
 
         if not user_message_text:
@@ -472,6 +482,30 @@ def zotero_json_proxy():
         # 根据词/句选择提示词
         is_word_input = is_word(user_message_text)
         print(f"是否为单词输入: {is_word_input}, 文本: '{user_message_text}'")
+        
+        # 添加缓存检查日志
+        if is_word_input:
+            cache_enabled = api_config and api_config.get('Relay', {}).get('Cache', True)
+            print(f"缓存启用状态: {cache_enabled}")
+            if cache_enabled:
+                cached_result = get_cached_word(user_message_text)
+                print(f"缓存检查结果: {'命中' if cached_result else '未命中'}")
+        
+        # 添加缓存检查日志
+        if is_word_input:
+            cache_enabled = api_config and api_config.get('Relay', {}).get('Cache', True)
+            print(f"缓存启用状态: {cache_enabled}")
+            if cache_enabled:
+                cached_result = get_cached_word(user_message_text)
+                print(f"缓存检查结果: {'命中' if cached_result else '未命中'}")
+        
+        # 添加缓存检查日志
+        if is_word_input:
+            cache_enabled = api_config and api_config.get('Relay', {}).get('Cache', True)
+            print(f"缓存启用状态: {cache_enabled}")
+            if cache_enabled:
+                cached_result = get_cached_word(user_message_text)
+                print(f"缓存检查结果: {'命中' if cached_result else '未命中'}")
 
         # 构造转发payload（强制非流式）
         outgoing = build_outgoing_payload(request_data, is_word_input)
@@ -546,6 +580,16 @@ def zotero_proxy():
             if isinstance(msg, dict) and msg.get('role') == 'user':
                 user_message_text = (msg.get('content') or '').strip()
                 print(f"找到用户消息: '{user_message_text}'")
+                
+                # 尝试提取实际的单词文本
+                import re
+                # 查找 sourceText: 后面的内容
+                source_match = re.search(r'sourceText:\s*(.+?)(?:\n|$)', user_message_text)
+                if source_match:
+                    actual_word = source_match.group(1).strip()
+                    print(f"提取到的实际单词: '{actual_word}'")
+                    # 替换用户消息文本为纯单词
+                    user_message_text = actual_word
                 break
 
         if not user_message_text:
@@ -629,6 +673,16 @@ def anx_reader_proxy():
             if isinstance(msg, dict) and msg.get('role') == 'user':
                 user_message_text = (msg.get('content') or '').strip()
                 print(f"找到用户消息: '{user_message_text}'")
+                
+                # 尝试提取实际的单词文本
+                import re
+                # 查找 sourceText: 后面的内容
+                source_match = re.search(r'sourceText:\s*(.+?)(?:\n|$)', user_message_text)
+                if source_match:
+                    actual_word = source_match.group(1).strip()
+                    print(f"提取到的实际单词: '{actual_word}'")
+                    # 替换用户消息文本为纯单词
+                    user_message_text = actual_word
                 break
 
         if not user_message_text:

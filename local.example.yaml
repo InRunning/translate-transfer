@@ -4,4 +4,4 @@ Relay:
   ApiKey: ""
   Temperature: 0
   Stream: True
-Cache: True
+  Cache: True

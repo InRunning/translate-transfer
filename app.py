@@ -449,22 +449,6 @@ def zotero_json_proxy():
             if cache_enabled:
                 cached_result = get_cached_word(user_message_text)
                 print(f"缓存检查结果: {'命中' if cached_result else '未命中'}")
-        
-        # 添加缓存检查日志
-        if is_word_input:
-            cache_enabled = api_config and api_config.get('Relay', {}).get('Cache', True)
-            print(f"缓存启用状态: {cache_enabled}")
-            if cache_enabled:
-                cached_result = get_cached_word(user_message_text)
-                print(f"缓存检查结果: {'命中' if cached_result else '未命中'}")
-        
-        # 添加缓存检查日志
-        if is_word_input:
-            cache_enabled = api_config and api_config.get('Relay', {}).get('Cache', True)
-            print(f"缓存启用状态: {cache_enabled}")
-            if cache_enabled:
-                cached_result = get_cached_word(user_message_text)
-                print(f"缓存检查结果: {'命中' if cached_result else '未命中'}")
 
         # 构造转发payload（强制非流式）
         outgoing = build_outgoing_payload(request_data, is_word_input)

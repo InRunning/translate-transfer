@@ -6,6 +6,7 @@
 
 - **智能翻译识别**：自动识别输入是单词还是句子，使用不同的翻译策略
 - **流式响应支持**：支持流式和非流式两种响应模式
+- **智能缓存机制**：单词翻译结果自动缓存，提升响应速度，减少API调用
 - **灵活配置**：支持通过配置文件和环境变量进行配置
 - **代理转发**：将请求转发到华为云 DeepSeek API
 - **健康检查**：提供健康检查端点
@@ -181,6 +182,7 @@ Relay:
   ApiKey: "your-api-key"         # API 密钥
   Temperature: 0                 # 温度参数
   Stream: true                   # 是否启用流式响应
+  Cache: true                    # 是否启用单词翻译缓存
 ```
 
 ### 环境变量
@@ -210,6 +212,26 @@ curl http://localhost:10283/health
 curl -X POST http://localhost:10283/zotero \
   -H "Content-Type: application/json" \
   -d '{"model": "DeepSeek-V3", "messages": [{"role": "user", "content": "Hello"}], "temperature": 0, "stream": false}'
+
+### 4. 缓存机制
+服务内置了智能缓存机制，专门针对单词翻译进行优化：
+
+- **自动缓存**：单词翻译结果会自动存储到 SQLite 数据库中
+- **缓存命中**：相同单词的后续请求直接从缓存返回，无需调用上游 API
+- **流式缓存**：支持流式响应的缓存，模拟真实的流式输出体验
+- **缓存配置**：可通过 `Cache` 参数启用或禁用缓存功能
+
+**缓存配置示例**：
+```yaml
+Relay:
+  Cache: true  # 启用缓存（默认为 true）
+```
+
+**缓存优势**：
+- 🚀 **响应更快**：缓存命中时响应时间显著缩短
+- 💰 **节省成本**：减少上游 API 调用，降低使用成本
+- 🔄 **稳定性**：即使上游 API 不可用，缓存内容仍可提供服务
+
 ```
 
 ## 📚 使用场景
@@ -300,6 +322,13 @@ def is_word(text):
 
 3. **依赖安装失败**
    ```
+
+#### 4. 缓存管理
+- [`init_db()`](app.py:34) - 初始化 SQLite 数据库，创建单词翻译缓存表
+- [`get_cached_word()`](app.py:62) - 从缓存中获取单词翻译结果
+- [`cache_word_translation()`](app.py:83) - 缓存单词翻译结果
+- [`get_db_connection()`](app.py:56) - 获取数据库连接
+
    解决：尝试更换 pip 源
    pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
    ```

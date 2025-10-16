@@ -1,0 +1,10 @@
+curl -X POST http://127.0.0.1:10283/anx-reader \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "DeepSeek-V3",
+    "messages": [
+      {"role": "user", "content": "single"}
+    ],
+    "temperature": 0,
+    "stream": true
+  }'

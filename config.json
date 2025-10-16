@@ -7,6 +7,7 @@
   },
   "routes": {
     "zotero": "/zotero",
+    "anx_reader": "/anx-reader",
     "health": "/health",
     "index": "/"
   },

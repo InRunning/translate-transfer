@@ -1,9 +1,11 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
+from flask import stream_with_context
 import requests
 import json
 import os
 import re
 import yaml
+from typing import Any, Dict, List, Optional
 
 def load_config():
     try:
@@ -30,55 +32,136 @@ def is_word(text):
     """检测是否为单词"""
     return bool(re.match(r'^[a-zA-Z]{1,50}$', text.strip()))
 
-def call_deepseek_api(text, is_word_input):
-    """调用DeepSeek API"""
+def build_outgoing_payload(incoming: Dict[str, Any], is_word_input: bool) -> Dict[str, Any]:
+    """基于入参构造转发给大模型的payload，并按词/句插入不同的system prompt。
+
+    - 尽量透传原始字段，仅覆盖必要字段（model/stream/messages/temperature默认）。
+    - messages 最前插入我们自定义的 system 提示词，其余保持入参顺序不变。
+    """
+    # 选择词/句不同的 system prompt
     if is_word_input:
-        system_prompt = "你是一个智能翻译助手，下面是单词，你需要给出该单词最常用的一个释义，并给出美式音标和英式音标，示例：输入：example 输出格式: 例子\n 美式音标：/ɪɡˈzæmpəl/, 英式音标：/ɪɡˈzɑːmpəl/ ."
+        system_prompt = (
+            "你是一个智能翻译助手，下面是单词，你需要给出该单词最常用的一个释义，"
+            "并给出美式音标和英式音标，示例：输入：example 输出格式: 例子\n 美式音标：/ɪɡˈzæmpəl/, 英式音标：/ɪɡˈzɑːmpəl/ ."
+        )
     else:
-        system_prompt = "你是一个智能翻译助手，下面是句子，请给出该句子的释义。示例：输入：I want to go home 输出: 我想回家 ."
-    
-    payload = {
-        "model": api_config['Relay']['Model'] if api_config else "DeepSeek-V3",
-        "stream": False,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": text}
-        ]
-    }
-    
-    api_key = api_config['Relay']['ApiKey'] if api_config else os.getenv('DEEPSEEK_API_KEY', '')
-    url = api_config['Relay']['Url'] if api_config else "https://api.modelarts-maas.com/v1/chat/completions"
-    
+        system_prompt = (
+            "你是一个智能翻译助手，下面是句子，请给出该句子的释义。"
+            "示例：输入：I want to go home 输出: 我想回家 ."
+        )
+
+    outgoing = dict(incoming)  # 透传基础字段
+
+    # 覆盖/补全必要字段
+    model = incoming.get('model') or (api_config and api_config.get('Relay', {}).get('Model')) or "DeepSeek-V3"
+    stream = incoming.get('stream') if incoming.get('stream') is not None else (
+        api_config and api_config.get('Relay', {}).get('Stream', False)
+    )
+
+    outgoing['model'] = model
+    if stream is not None:
+        outgoing['stream'] = stream
+
+    # temperature 透传或使用配置默认
+    if incoming.get('temperature') is None:
+        temp_default = api_config and api_config.get('Relay', {}).get('Temperature')
+        if temp_default is not None:
+            outgoing['temperature'] = temp_default
+
+    # messages：在首部插入我们自己的 system 提示
+    messages: List[Dict[str, str]] = incoming.get('messages') or []
+    outgoing['messages'] = [{"role": "system", "content": system_prompt}] + messages
+
+    return outgoing
+
+def proxy_deepseek(payload: Dict[str, Any]) -> Response:
+    """将请求代理到华为云 DeepSeek 接口，透传响应（含流式）。"""
+    api_key = (api_config and api_config.get('Relay', {}).get('ApiKey')) or os.getenv('DEEPSEEK_API_KEY', '')
+    url = (api_config and api_config.get('Relay', {}).get('Url')) or "https://api.modelarts-maas.com/v1/chat/completions"
+
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}"
     }
-    
+
+    want_stream = bool(payload.get('stream'))
+
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=30)
-        return response.json()
+        upstream = requests.post(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=None if want_stream else 30,
+            stream=want_stream,
+        )
+
+        # 非200直接透传错误体
+        if upstream.status_code != 200:
+            return Response(
+                upstream.content,
+                status=upstream.status_code,
+                content_type=upstream.headers.get('Content-Type', 'application/json')
+            )
+
+        # 流式：逐块透传上游字节，不做改写
+        if want_stream:
+            def generate():
+                try:
+                    for chunk in upstream.iter_content(chunk_size=8192):
+                        if chunk:
+                            yield chunk
+                finally:
+                    upstream.close()
+
+            return Response(
+                stream_with_context(generate()),
+                status=200,
+                content_type=upstream.headers.get('Content-Type', 'text/event-stream')
+            )
+
+        # 非流式：直接透传完整JSON文本
+        return Response(
+            upstream.content,
+            status=upstream.status_code,
+            content_type=upstream.headers.get('Content-Type', 'application/json')
+        )
+
     except Exception as e:
-        return {"error": str(e)}
+        return Response(json.dumps({"error": str(e)}, ensure_ascii=False), status=500, content_type='application/json')
 
 @app.route(config['routes']['zotero'], methods=['POST'])
 def zotero_proxy():
+    """Zotero 代理端点
+
+    - 判断最后一条 user 文本是单词还是句子，选择不同的 system 提示词。
+    - 构造 payload 并透传给上游大模型接口（含流式）。
+    - 响应体保持与上游一致的数据结构与Content-Type。
+    """
     try:
-        request_data = request.get_json()
-        if not request_data or 'messages' not in request_data:
+        request_data = request.get_json(silent=True)
+        if not isinstance(request_data, dict):
             return jsonify({"error": "Invalid request"}), 400
-        
-        user_message = request_data['messages'][-1].get('content', '').strip()
-        if not user_message:
+
+        messages = request_data.get('messages') or []
+        # 尝试从最后一条 user 消息中取文本
+        user_message_text: Optional[str] = None
+        for msg in reversed(messages):
+            if isinstance(msg, dict) and msg.get('role') == 'user':
+                user_message_text = (msg.get('content') or '').strip()
+                break
+
+        if not user_message_text:
             return jsonify({"error": "Empty message"}), 400
-        
-        is_word_input = is_word(user_message)
-        result = call_deepseek_api(user_message, is_word_input)
-        
-        if "error" in result:
-            return jsonify({"error": result["error"]}), 500
-        
-        return jsonify(result)
-    
+
+        # 根据词/句选择提示词
+        is_word_input = is_word(user_message_text)
+
+        # 构造转发payload（尽量透传原始字段）
+        outgoing = build_outgoing_payload(request_data, is_word_input)
+
+        # 代理到上游并按需流式输出
+        return proxy_deepseek(outgoing)
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -88,7 +171,11 @@ def health_check():
 
 @app.route('/', methods=['GET'])
 def index():
-    return jsonify({"message": "翻译服务", "version": "1.0.0"})
+    return jsonify({
+        "message": "翻译服务",
+        "version": "1.0.0",
+        "endpoints": config.get('routes', {})
+    })
 
 if __name__ == '__main__':
     app.run(

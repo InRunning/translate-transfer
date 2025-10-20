@@ -664,6 +664,22 @@ def anx_reader_proxy():
             "traceback": error_details
         }), 500
 
+@app.route('/anx-reader/chat/completions', methods=['POST'])
+def anx_reader_chat_completions_proxy():
+    """Anx-Reader Chat Completions 代理端点
+    
+    功能与 /anx-reader 完全相同，只是路径不同。
+    """
+    return anx_reader_proxy()
+
+@app.route('/anx-reader/v1/chat/completions', methods=['POST'])
+def anx_reader_v1_chat_completions_proxy():
+    """Anx-Reader V1 Chat Completions 代理端点
+    
+    功能与 /anx-reader 完全相同，只是路径不同。
+    """
+    return anx_reader_proxy()
+
 @app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({"status": "healthy"})

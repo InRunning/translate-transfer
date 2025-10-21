@@ -35,7 +35,7 @@ def init_db():
     """初始化 SQLite 数据库，创建单词翻译缓存表"""
     conn = sqlite3.connect('word_cache.db')
     cursor = conn.cursor()
-    
+
     # 创建单词翻译缓存表
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS word_cache (
@@ -46,10 +46,10 @@ def init_db():
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
-    
+
     # 创建索引以提高查询性能
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_word ON word_cache(word)')
-    
+
     conn.commit()
     conn.close()
 
@@ -63,16 +63,16 @@ def get_cached_word(word: str) -> Optional[Dict[str, str]]:
     """从缓存中获取单词翻译结果"""
     conn = get_db_connection()
     cursor = conn.cursor()
-    
+
     cursor.execute('''
         SELECT word, translation_result
         FROM word_cache
         WHERE word = ?
     ''', (word.lower(),))
-    
+
     result = cursor.fetchone()
     conn.close()
-    
+
     if result:
         return {
             'word': result['word'],
@@ -84,13 +84,13 @@ def cache_word_translation(word: str, translation_result: str):
     """缓存单词翻译结果"""
     conn = get_db_connection()
     cursor = conn.cursor()
-    
+
     try:
         cursor.execute('''
             INSERT OR REPLACE INTO word_cache (word, translation_result, updated_at)
             VALUES (?, ?, CURRENT_TIMESTAMP)
         ''', (word.lower(), translation_result))
-        
+
         conn.commit()
         return True
     except sqlite3.Error as e:
@@ -116,12 +116,12 @@ def build_outgoing_payload(incoming: Dict[str, Any], is_word_input: bool) -> Dic
     if is_word_input:
         system_prompt = (
             "你是一个智能翻译助手，下面是单词，你需要给出该单词最常用的一个释义，"
-            "并给出美式音标和英式音标，示例：输入：example 输出格式: 例子\n 美式音标：/ɪɡˈzæmpəl/, 英式音标：/ɪɡˈzɑːmpəl/ ."
+            "并给出美式音标和英式音标，示例：输入：example 输出格式: 例子\n 美式音标：/ɪɡˈzæmpəl/ \n英式音标：/ɪɡˈzɑːmpəl/ ./no_think"
         )
     else:
         system_prompt = (
             "你是一个智能翻译助手，下面是句子，请给出该句子的释义。"
-            "示例：输入：I want to go home 输出: 我想回家 ."
+            "示例：输入：I want to go home 输出: 我想回家 ./no_think"
         )
 
     outgoing = dict(incoming)  # 透传基础字段
@@ -146,36 +146,36 @@ def build_outgoing_payload(incoming: Dict[str, Any], is_word_input: bool) -> Dic
     messages: List[Dict[str, str]] = incoming.get('messages') or []
     if not messages:
         raise ValueError("Messages cannot be empty")
-    
+
     # 验证每条消息的格式
     for msg in messages:
         if not isinstance(msg, dict) or not msg.get('role') or not msg.get('content'):
             raise ValueError("Invalid message format")
-    
+
     outgoing['messages'] = [{"role": "system", "content": system_prompt}] + messages
 
     return outgoing
 
 def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Response:
     """将请求代理到华为云 DeepSeek 接口，透传响应（含流式）。
-    
+
     Args:
         payload: 要发送的请求数据
         word: 要翻译的单词，如果提供则先检查缓存
     """
     # 检查缓存是否启用
     cache_enabled = api_config and api_config.get('Relay', {}).get('Cache', True)
-    
+
     # 如果是单词翻译且缓存启用，先检查缓存
     if word and cache_enabled:
         cached_result = get_cached_word(word)
         if cached_result:
             # 直接使用缓存内容
             cache_content = cached_result['translation_result']
-            
+
             # 检查是否需要流式响应
             want_stream = bool(payload.get('stream'))
-            
+
             if want_stream:
                 # 流式响应：模拟LLM的流式输出
                 def generate():
@@ -194,7 +194,7 @@ def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Respo
                         "usage": {"prompt_tokens": 0, "total_tokens": 0, "completion_tokens": 0}
                     }
                     yield f"data: {json.dumps(initial_chunk, ensure_ascii=False)}\n\n".encode('utf-8')
-                    
+
                     # 逐字符输出内容
                     for char in cache_content:
                         chunk = {
@@ -211,7 +211,7 @@ def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Respo
                             "usage": {"prompt_tokens": 0, "total_tokens": 0, "completion_tokens": 0}
                         }
                         yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n".encode('utf-8')
-                    
+
                     # 生成结束chunk
                     final_chunk = {
                         "id": initial_chunk["id"],
@@ -232,7 +232,7 @@ def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Respo
                         }
                     }
                     yield f"data: {json.dumps(final_chunk, ensure_ascii=False)}\n\n".encode('utf-8')
-                
+
                 return Response(
                     stream_with_context(generate()),
                     status=200,
@@ -253,7 +253,7 @@ def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Respo
                     status=200,
                     content_type='application/json'
                 )
-    
+
     api_key = (api_config and api_config.get('Relay', {}).get('ApiKey')) or os.getenv('DEEPSEEK_API_KEY', '')
     url = (api_config and api_config.get('Relay', {}).get('Url')) or "https://api.modelarts-maas.com/v1/chat/completions"
 
@@ -285,7 +285,7 @@ def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Respo
         if want_stream:
             # 如果没有缓存，继续正常的流式处理
             translation_buffer = ""  # 用于累积翻译内容
-            
+
             def generate_stream():
                 nonlocal translation_buffer
                 try:
@@ -296,7 +296,7 @@ def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Respo
                             # 尝试解析完整的 JSON 块
                             lines = buffer.decode('utf-8', errors='ignore').split('\n')
                             buffer = b""  # 清空缓冲区
-                            
+
                             for line in lines:
                                 line = line.strip()
                                 if line.startswith('data: ') and len(line) > 6:
@@ -309,7 +309,7 @@ def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Respo
                                                 # 累积翻译内容用于缓存
                                                 if data['choices'][0].get('delta', {}).get('content'):
                                                     translation_buffer += data['choices'][0]['delta']['content']
-                                                
+
                                                 yield (line + '\n').encode('utf-8')
                                             # 如果 choices 为空，跳过这个响应块
                                     except json.JSONDecodeError:
@@ -329,7 +329,7 @@ def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Respo
                     if word and translation_buffer and cache_enabled and not get_cached_word(word):
                         # 直接缓存完整的翻译结果
                         cache_word_translation(word, translation_buffer)
-                    
+
                     upstream.close()
 
             return Response(
@@ -348,7 +348,7 @@ def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Respo
                     assistant_message = response_data['choices'][0]['message']['content']
                     # 直接缓存完整的翻译结果
                     cache_word_translation(word, assistant_message)
-                
+
                 return Response(
                     upstream.content,
                     status=upstream.status_code,
@@ -379,7 +379,7 @@ def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Respo
 @app.route('/zotero/json', methods=['POST'])
 def zotero_json_proxy():
     """Zotero 代理端点（非流式JSON响应）
-    
+
     这个端点总是返回标准的JSON响应，兼容Apifox等工具。
     """
     try:
@@ -387,12 +387,12 @@ def zotero_json_proxy():
         raw_content = request.get_data(as_text=True)
         print(f"Zotero JSON 原始请求内容: {raw_content}")
         print(f"请求 Content-Type: {request.content_type}")
-        
+
         # 检查 Content-Type
         content_type = request.content_type or ''
         if 'application/json' not in content_type:
             print(f"警告: Content-Type 不是 application/json: {content_type}")
-        
+
         request_data = request.get_json(silent=True)
         if request_data is None:
             # 详细说明JSON解析失败的原因
@@ -403,7 +403,7 @@ def zotero_json_proxy():
                 "details": "请检查请求格式是否正确",
                 "hint": "确保请求头包含 'Content-Type: application/json'"
             }), 400
-        
+
         if not isinstance(request_data, dict):
             return jsonify({"error": f"Invalid request data type: {type(request_data)}"}), 400
 
@@ -411,7 +411,7 @@ def zotero_json_proxy():
 
         messages = request_data.get('messages') or []
         print(f"Messages 数量: {len(messages)}")
-        
+
         # 尝试从最后一条 user 消息中取文本
         user_message_text: Optional[str] = None
         for i, msg in enumerate(reversed(messages)):
@@ -419,7 +419,7 @@ def zotero_json_proxy():
             if isinstance(msg, dict) and msg.get('role') == 'user':
                 user_message_text = (msg.get('content') or '').strip()
                 print(f"找到用户消息: '{user_message_text}'")
-                
+
                 # 尝试提取实际的单词文本
                 import re
                 # 查找 sourceText: 后面的内容
@@ -441,7 +441,7 @@ def zotero_json_proxy():
         # 根据词/句选择提示词
         is_word_input = is_word(user_message_text)
         print(f"是否为单词输入: {is_word_input}, 文本: '{user_message_text}'")
-        
+
         # 添加缓存检查日志
         if is_word_input:
             cache_enabled = api_config and api_config.get('Relay', {}).get('Cache', True)
@@ -452,14 +452,14 @@ def zotero_json_proxy():
 
         # 构造转发payload（强制非流式）
         outgoing = build_outgoing_payload(request_data, is_word_input)
-        
+
         # 强制设置为非流式
         outgoing['stream'] = False
-        
+
         # 验证构造的payload
         if not outgoing.get('model'):
             outgoing['model'] = "DeepSeek-V3"  # 确保有有效的模型名称
-        
+
         if not outgoing.get('messages'):
             return jsonify({"error": "Invalid messages format", "details": "构造的payload中缺少messages"}), 400
 
@@ -491,12 +491,12 @@ def zotero_proxy():
         raw_content = request.get_data(as_text=True)
         print(f"Zotero 原始请求内容: {raw_content}")
         print(f"请求 Content-Type: {request.content_type}")
-        
+
         # 检查 Content-Type
         content_type = request.content_type or ''
         if 'application/json' not in content_type:
             print(f"警告: Content-Type 不是 application/json: {content_type}")
-        
+
         request_data = request.get_json(silent=True)
         if request_data is None:
             # 详细说明JSON解析失败的原因
@@ -507,7 +507,7 @@ def zotero_proxy():
                 "details": "请检查请求格式是否正确",
                 "hint": "确保请求头包含 'Content-Type: application/json'"
             }), 400
-        
+
         if not isinstance(request_data, dict):
             return jsonify({"error": f"Invalid request data type: {type(request_data)}"}), 400
 
@@ -515,7 +515,7 @@ def zotero_proxy():
 
         messages = request_data.get('messages') or []
         print(f"Messages 数量: {len(messages)}")
-        
+
         # 尝试从最后一条 user 消息中取文本
         user_message_text: Optional[str] = None
         for i, msg in enumerate(reversed(messages)):
@@ -523,7 +523,7 @@ def zotero_proxy():
             if isinstance(msg, dict) and msg.get('role') == 'user':
                 user_message_text = (msg.get('content') or '').strip()
                 print(f"找到用户消息: '{user_message_text}'")
-                
+
                 # 尝试提取实际的单词文本
                 import re
                 # 查找 sourceText: 后面的内容
@@ -548,11 +548,11 @@ def zotero_proxy():
 
         # 构造转发payload（尽量透传原始字段）
         outgoing = build_outgoing_payload(request_data, is_word_input)
-        
+
         # 验证构造的payload
         if not outgoing.get('model'):
             outgoing['model'] = "DeepSeek-V3"  # 确保有有效的模型名称
-        
+
         if not outgoing.get('messages'):
             return jsonify({"error": "Invalid messages format", "details": "构造的payload中缺少messages"}), 400
 
@@ -584,12 +584,12 @@ def anx_reader_proxy():
         raw_content = request.get_data(as_text=True)
         print(f"Anx-Reader 原始请求内容: {raw_content}")
         print(f"请求 Content-Type: {request.content_type}")
-        
+
         # 检查 Content-Type
         content_type = request.content_type or ''
         if 'application/json' not in content_type:
             print(f"警告: Content-Type 不是 application/json: {content_type}")
-        
+
         request_data = request.get_json(silent=True)
         if request_data is None:
             # 详细说明JSON解析失败的原因
@@ -600,7 +600,7 @@ def anx_reader_proxy():
                 "details": "请检查请求格式是否正确",
                 "hint": "确保请求头包含 'Content-Type: application/json'"
             }), 400
-        
+
         if not isinstance(request_data, dict):
             return jsonify({"error": f"Invalid request data type: {type(request_data)}"}), 400
 
@@ -608,7 +608,7 @@ def anx_reader_proxy():
 
         messages = request_data.get('messages') or []
         print(f"Messages 数量: {len(messages)}")
-        
+
         # 尝试从最后一条 user 消息中取文本
         user_message_text: Optional[str] = None
         for i, msg in enumerate(reversed(messages)):
@@ -616,7 +616,7 @@ def anx_reader_proxy():
             if isinstance(msg, dict) and msg.get('role') == 'user':
                 user_message_text = (msg.get('content') or '').strip()
                 print(f"找到用户消息: '{user_message_text}'")
-                
+
                 # 尝试提取实际的单词文本
                 import re
                 # 查找 sourceText: 后面的内容
@@ -641,11 +641,11 @@ def anx_reader_proxy():
 
         # 构造转发payload（尽量透传原始字段）
         outgoing = build_outgoing_payload(request_data, is_word_input)
-        
+
         # 验证构造的payload
         if not outgoing.get('model'):
             outgoing['model'] = "DeepSeek-V3"  # 确保有有效的模型名称
-        
+
         if not outgoing.get('messages'):
             return jsonify({"error": "Invalid messages format", "details": "构造的payload中缺少messages"}), 400
 
@@ -667,7 +667,7 @@ def anx_reader_proxy():
 @app.route('/anx-reader/chat/completions', methods=['POST'])
 def anx_reader_chat_completions_proxy():
     """Anx-Reader Chat Completions 代理端点
-    
+
     功能与 /anx-reader 完全相同，只是路径不同。
     """
     return anx_reader_proxy()
@@ -675,7 +675,7 @@ def anx_reader_chat_completions_proxy():
 @app.route('/anx-reader/v1/chat/completions', methods=['POST'])
 def anx_reader_v1_chat_completions_proxy():
     """Anx-Reader V1 Chat Completions 代理端点
-    
+
     功能与 /anx-reader 完全相同，只是路径不同。
     """
     return anx_reader_proxy()

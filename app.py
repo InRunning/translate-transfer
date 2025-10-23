@@ -115,13 +115,11 @@ def build_outgoing_payload(incoming: Dict[str, Any], is_word_input: bool) -> Dic
     # 选择词/句不同的 system prompt
     if is_word_input:
         system_prompt = (
-            "你是一个智能翻译助手，下面是单词，你需要给出该单词最常用的一个释义，"
-            "并给出美式音标和英式音标，示例：输入：example 输出格式: 例子\n 美式音标：/ɪɡˈzæmpəl/ \n英式音标：/ɪɡˈzɑːmpəl/ ./no_think"
+            "你是一个智能翻译助手，下面是单词，你需要给出该单词最常用的一个释义，并给出美式音标和英式音标，示例：输入：example 输出格式: 例子\n 美式音标：/ɪɡˈzæmpəl/ \n英式音标：/ɪɡˈzɑːmpəl/ ./no_think"
         )
     else:
         system_prompt = (
-            "你是一个智能翻译助手，下面是句子，请给出该句子的释义。"
-            "示例：输入：I want to go home 输出: 我想回家 ./no_think"
+            "你是一个智能翻译助手，下面是句子，请给出该句子的释义。示例：输入：I want to go home 输出: 我想回家 ./no_think"
         )
 
     outgoing = dict(incoming)  # 透传基础字段

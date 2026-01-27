@@ -5,9 +5,9 @@ import json
 import os
 import re
 import yaml
-import sqlite3
 import time
 from typing import Any, Dict, List, Optional
+from database import init_db, get_cached_word, cache_word_translation
 
 def load_config():
     try:
@@ -29,75 +29,6 @@ def load_api_config():
 config = load_config()
 api_config = load_api_config()
 app = Flask(__name__)
-
-# SQLite 数据库初始化
-def init_db():
-    """初始化 SQLite 数据库，创建单词翻译缓存表"""
-    conn = sqlite3.connect('word_cache.db')
-    cursor = conn.cursor()
-
-    # 创建单词翻译缓存表
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS word_cache (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            word TEXT UNIQUE NOT NULL,
-            translation_result TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-
-    # 创建索引以提高查询性能
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_word ON word_cache(word)')
-
-    conn.commit()
-    conn.close()
-
-def get_db_connection():
-    """获取数据库连接"""
-    conn = sqlite3.connect('word_cache.db')
-    conn.row_factory = sqlite3.Row  # 返回字典形式的行
-    return conn
-
-def get_cached_word(word: str) -> Optional[Dict[str, str]]:
-    """从缓存中获取单词翻译结果"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    cursor.execute('''
-        SELECT word, translation_result
-        FROM word_cache
-        WHERE word = ?
-    ''', (word.lower(),))
-
-    result = cursor.fetchone()
-    conn.close()
-
-    if result:
-        return {
-            'word': result['word'],
-            'translation_result': result['translation_result']
-        }
-    return None
-
-def cache_word_translation(word: str, translation_result: str):
-    """缓存单词翻译结果"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    try:
-        cursor.execute('''
-            INSERT OR REPLACE INTO word_cache (word, translation_result, updated_at)
-            VALUES (?, ?, CURRENT_TIMESTAMP)
-        ''', (word.lower(), translation_result))
-
-        conn.commit()
-        return True
-    except sqlite3.Error as e:
-        print(f"数据库错误: {e}")
-        return False
-    finally:
-        conn.close()
 
 # 初始化数据库
 init_db()

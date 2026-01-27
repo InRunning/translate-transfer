@@ -55,6 +55,14 @@ Relay:
   ApiKey: "your-api-key-here"
   Temperature: 0
   Stream: True
+  Cache: True
+
+# 单词缓存数据库配置（默认 SQLite）
+Database:
+  # mysql / sqlite / postgresql
+  Type: "sqlite"
+  Sqlite:
+    Path: "word_cache.db"
 ```
 
 或者设置环境变量：
@@ -183,6 +191,32 @@ Relay:
   Temperature: 0                 # 温度参数
   Stream: true                   # 是否启用流式响应
   Cache: true                    # 是否启用单词翻译缓存
+
+Database:
+  # 选择：mysql / sqlite / postgresql
+  Type: "sqlite"
+
+  # SQLite 配置（Type=sqlite 时使用）
+  Sqlite:
+    Path: "word_cache.db"
+
+  # MySQL 配置（Type=mysql 时使用）
+  Mysql:
+    Host: "127.0.0.1"
+    Port: 3306
+    Dbname: "translate_transfer"
+    Username: "root"
+    Password: ""
+    Params: "charset=utf8mb4"
+
+  # PostgreSQL 配置（Type=postgresql 时使用）
+  Postgresql:
+    Host: "127.0.0.1"
+    Port: 5432
+    Dbname: "translate_transfer"
+    Username: "postgres"
+    Password: ""
+    Params: "sslmode=disable"
 ```
 
 ### 环境变量
@@ -212,14 +246,19 @@ curl http://localhost:10283/health
 curl -X POST http://localhost:10283/zotero \
   -H "Content-Type: application/json" \
   -d '{"model": "DeepSeek-V3", "messages": [{"role": "user", "content": "Hello"}], "temperature": 0, "stream": false}'
+```
 
 ### 4. 缓存机制
 服务内置了智能缓存机制，专门针对单词翻译进行优化：
 
-- **自动缓存**：单词翻译结果会自动存储到 SQLite 数据库中
+- **自动缓存**：单词翻译结果会自动存储到配置的数据库中（默认 SQLite）
 - **缓存命中**：相同单词的后续请求直接从缓存返回，无需调用上游 API
 - **流式缓存**：支持流式响应的缓存，模拟真实的流式输出体验
 - **缓存配置**：可通过 `Cache` 参数启用或禁用缓存功能
+
+**数据库支持**：
+- SQLite / MySQL / PostgreSQL 均可（通过 `local.yaml` 的 `Database.Type` 切换）
+- 使用 MySQL 或 PostgreSQL 时，请确保目标数据库已创建且安装了对应驱动（例如 PostgreSQL 常用 `psycopg2`/`psycopg`）
 
 **缓存配置示例**：
 ```yaml
@@ -231,8 +270,6 @@ Relay:
 - 🚀 **响应更快**：缓存命中时响应时间显著缩短
 - 💰 **节省成本**：减少上游 API 调用，降低使用成本
 - 🔄 **稳定性**：即使上游 API 不可用，缓存内容仍可提供服务
-
-```
 
 ## 📚 使用场景
 
@@ -322,13 +359,6 @@ def is_word(text):
 
 3. **依赖安装失败**
    ```
-
-#### 4. 缓存管理
-- [`init_db()`](app.py:34) - 初始化 SQLite 数据库，创建单词翻译缓存表
-- [`get_cached_word()`](app.py:62) - 从缓存中获取单词翻译结果
-- [`cache_word_translation()`](app.py:83) - 缓存单词翻译结果
-- [`get_db_connection()`](app.py:56) - 获取数据库连接
-
    解决：尝试更换 pip 源
    pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
    ```

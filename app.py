@@ -4,6 +4,7 @@ import requests
 import json
 import os
 import re
+import unicodedata
 import yaml
 import time
 from typing import Any, Dict, List, Optional
@@ -35,9 +36,38 @@ init_db()
 
 def is_word(text):
     """检测是否为单词"""
-    return bool(re.match(r'^[a-zA-Z]{1,50}$', text.strip()))
+    return bool(re.match(r'^[a-zA-Z]{1,50}$', normalize_word_text(text)))
 
-def build_outgoing_payload(incoming: Dict[str, Any], is_word_input: bool) -> Dict[str, Any]:
+def normalize_word_text(text: str) -> str:
+    """移除标点后返回文本，用于单词判定、翻译和音标展示。"""
+    return ''.join(
+        char for char in text.strip()
+        if not unicodedata.category(char).startswith('P')
+    ).strip()
+
+def extract_user_message_text(messages: List[Dict[str, str]]) -> Optional[str]:
+    """从最后一条 user 消息中提取要翻译的文本。"""
+    for i, msg in enumerate(reversed(messages)):
+        print(f"检查消息 {i}: {msg}")
+        if isinstance(msg, dict) and msg.get('role') == 'user':
+            user_message_text = (msg.get('content') or '').strip()
+            print(f"找到用户消息: '{user_message_text}'")
+
+            source_match = re.search(r'sourceText:\s*(.+?)(?:\n|$)', user_message_text)
+            if source_match:
+                actual_word = source_match.group(1).strip()
+                print(f"提取到的实际单词: '{actual_word}'")
+                user_message_text = actual_word
+
+            return user_message_text
+
+    return None
+
+def build_outgoing_payload(
+    incoming: Dict[str, Any],
+    is_word_input: bool,
+    user_text_override: Optional[str] = None,
+) -> Dict[str, Any]:
     """基于入参构造转发给大模型的payload，并按词/句插入不同的system prompt。
 
     - 尽量透传原始字段，仅覆盖必要字段（model/stream/messages/temperature默认）。
@@ -81,7 +111,14 @@ def build_outgoing_payload(incoming: Dict[str, Any], is_word_input: bool) -> Dic
         if not isinstance(msg, dict) or not msg.get('role') or not msg.get('content'):
             raise ValueError("Invalid message format")
 
-    outgoing['messages'] = [{"role": "system", "content": system_prompt}] + messages
+    outgoing_messages = [dict(msg) for msg in messages]
+    if user_text_override is not None:
+        for index in range(len(outgoing_messages) - 1, -1, -1):
+            if outgoing_messages[index].get('role') == 'user':
+                outgoing_messages[index]['content'] = user_text_override
+                break
+
+    outgoing['messages'] = [{"role": "system", "content": system_prompt}] + outgoing_messages
 
     return outgoing
 
@@ -342,23 +379,7 @@ def zotero_json_proxy():
         print(f"Messages 数量: {len(messages)}")
 
         # 尝试从最后一条 user 消息中取文本
-        user_message_text: Optional[str] = None
-        for i, msg in enumerate(reversed(messages)):
-            print(f"检查消息 {i}: {msg}")
-            if isinstance(msg, dict) and msg.get('role') == 'user':
-                user_message_text = (msg.get('content') or '').strip()
-                print(f"找到用户消息: '{user_message_text}'")
-
-                # 尝试提取实际的单词文本
-                import re
-                # 查找 sourceText: 后面的内容
-                source_match = re.search(r'sourceText:\s*(.+?)(?:\n|$)', user_message_text)
-                if source_match:
-                    actual_word = source_match.group(1).strip()
-                    print(f"提取到的实际单词: '{actual_word}'")
-                    # 替换用户消息文本为纯单词
-                    user_message_text = actual_word
-                break
+        user_message_text = extract_user_message_text(messages)
 
         if not user_message_text:
             return jsonify({
@@ -367,20 +388,28 @@ def zotero_json_proxy():
                 "messages": messages
             }), 400
 
-        # 根据词/句选择提示词
+        normalized_word_text = normalize_word_text(user_message_text)
         is_word_input = is_word(user_message_text)
-        print(f"是否为单词输入: {is_word_input}, 文本: '{user_message_text}'")
+        effective_user_text = normalized_word_text if is_word_input else user_message_text
+        print(
+            f"是否为单词输入: {is_word_input}, 原文本: '{user_message_text}', "
+            f"规范化后: '{effective_user_text}'"
+        )
 
         # 添加缓存检查日志
         if is_word_input:
             cache_enabled = api_config and api_config.get('Relay', {}).get('Cache', True)
             print(f"缓存启用状态: {cache_enabled}")
             if cache_enabled:
-                cached_result = get_cached_word(user_message_text)
+                cached_result = get_cached_word(effective_user_text)
                 print(f"缓存检查结果: {'命中' if cached_result else '未命中'}")
 
         # 构造转发payload（强制非流式）
-        outgoing = build_outgoing_payload(request_data, is_word_input)
+        outgoing = build_outgoing_payload(
+            request_data,
+            is_word_input,
+            effective_user_text if is_word_input else None,
+        )
 
         # 强制设置为非流式
         outgoing['stream'] = False
@@ -395,7 +424,7 @@ def zotero_json_proxy():
         print(f"构造的payload (非流式): {outgoing}")
 
         # 代理到上游并返回非流式响应
-        return proxy_deepseek(outgoing, user_message_text if is_word_input else None)
+        return proxy_deepseek(outgoing, effective_user_text if is_word_input else None)
 
     except Exception as e:
         import traceback
@@ -446,23 +475,7 @@ def zotero_proxy():
         print(f"Messages 数量: {len(messages)}")
 
         # 尝试从最后一条 user 消息中取文本
-        user_message_text: Optional[str] = None
-        for i, msg in enumerate(reversed(messages)):
-            print(f"检查消息 {i}: {msg}")
-            if isinstance(msg, dict) and msg.get('role') == 'user':
-                user_message_text = (msg.get('content') or '').strip()
-                print(f"找到用户消息: '{user_message_text}'")
-
-                # 尝试提取实际的单词文本
-                import re
-                # 查找 sourceText: 后面的内容
-                source_match = re.search(r'sourceText:\s*(.+?)(?:\n|$)', user_message_text)
-                if source_match:
-                    actual_word = source_match.group(1).strip()
-                    print(f"提取到的实际单词: '{actual_word}'")
-                    # 替换用户消息文本为纯单词
-                    user_message_text = actual_word
-                break
+        user_message_text = extract_user_message_text(messages)
 
         if not user_message_text:
             return jsonify({
@@ -471,12 +484,20 @@ def zotero_proxy():
                 "messages": messages
             }), 400
 
-        # 根据词/句选择提示词
+        normalized_word_text = normalize_word_text(user_message_text)
         is_word_input = is_word(user_message_text)
-        print(f"是否为单词输入: {is_word_input}, 文本: '{user_message_text}'")
+        effective_user_text = normalized_word_text if is_word_input else user_message_text
+        print(
+            f"是否为单词输入: {is_word_input}, 原文本: '{user_message_text}', "
+            f"规范化后: '{effective_user_text}'"
+        )
 
         # 构造转发payload（尽量透传原始字段）
-        outgoing = build_outgoing_payload(request_data, is_word_input)
+        outgoing = build_outgoing_payload(
+            request_data,
+            is_word_input,
+            effective_user_text if is_word_input else None,
+        )
 
         # 验证构造的payload
         if not outgoing.get('model'):
@@ -488,7 +509,7 @@ def zotero_proxy():
         print(f"构造的payload: {outgoing}")
 
         # 代理到上游并按需流式输出，如果是单词则传递单词参数
-        return proxy_deepseek(outgoing, user_message_text if is_word_input else None)
+        return proxy_deepseek(outgoing, effective_user_text if is_word_input else None)
 
     except Exception as e:
         import traceback
@@ -539,23 +560,7 @@ def anx_reader_proxy():
         print(f"Messages 数量: {len(messages)}")
 
         # 尝试从最后一条 user 消息中取文本
-        user_message_text: Optional[str] = None
-        for i, msg in enumerate(reversed(messages)):
-            print(f"检查消息 {i}: {msg}")
-            if isinstance(msg, dict) and msg.get('role') == 'user':
-                user_message_text = (msg.get('content') or '').strip()
-                print(f"找到用户消息: '{user_message_text}'")
-
-                # 尝试提取实际的单词文本
-                import re
-                # 查找 sourceText: 后面的内容
-                source_match = re.search(r'sourceText:\s*(.+?)(?:\n|$)', user_message_text)
-                if source_match:
-                    actual_word = source_match.group(1).strip()
-                    print(f"提取到的实际单词: '{actual_word}'")
-                    # 替换用户消息文本为纯单词
-                    user_message_text = actual_word
-                break
+        user_message_text = extract_user_message_text(messages)
 
         if not user_message_text:
             return jsonify({
@@ -564,12 +569,20 @@ def anx_reader_proxy():
                 "messages": messages
             }), 400
 
-        # 根据词/句选择提示词
+        normalized_word_text = normalize_word_text(user_message_text)
         is_word_input = is_word(user_message_text)
-        print(f"是否为单词输入: {is_word_input}, 文本: '{user_message_text}'")
+        effective_user_text = normalized_word_text if is_word_input else user_message_text
+        print(
+            f"是否为单词输入: {is_word_input}, 原文本: '{user_message_text}', "
+            f"规范化后: '{effective_user_text}'"
+        )
 
         # 构造转发payload（尽量透传原始字段）
-        outgoing = build_outgoing_payload(request_data, is_word_input)
+        outgoing = build_outgoing_payload(
+            request_data,
+            is_word_input,
+            effective_user_text if is_word_input else None,
+        )
 
         # 验证构造的payload
         if not outgoing.get('model'):
@@ -581,7 +594,7 @@ def anx_reader_proxy():
         print(f"构造的payload: {outgoing}")
 
         # 代理到上游并按需流式输出，如果是单词则传递单词参数
-        return proxy_deepseek(outgoing, user_message_text if is_word_input else None)
+        return proxy_deepseek(outgoing, effective_user_text if is_word_input else None)
 
     except Exception as e:
         import traceback

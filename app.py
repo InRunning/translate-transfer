@@ -194,7 +194,7 @@ def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Respo
                         "usage": {
                             "prompt_tokens": 78,
                             "total_tokens": 106,
-                            "completion_tokens": len(cache_content)
+                            "completion_tokens": len(cache_content) # type: ignore
                         }
                     }
                     yield f"data: {json.dumps(final_chunk, ensure_ascii=False)}\n\n".encode('utf-8')

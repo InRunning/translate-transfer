@@ -86,7 +86,9 @@ def build_outgoing_payload(
     outgoing = dict(incoming)  # 透传基础字段
 
     # 覆盖/补全必要字段
-    model = incoming.get('model') or (api_config and api_config.get('Relay', {}).get('Model')) or "DeepSeek-V3"
+    configured_model = api_config and api_config.get('Relay', {}).get('Model')
+    incoming_model = incoming.get('model')
+    model = configured_model or incoming_model or "DeepSeek-V3"
     stream = incoming.get('stream') if incoming.get('stream') is not None else (
         api_config and api_config.get('Relay', {}).get('Stream', False)
     )
@@ -119,6 +121,14 @@ def build_outgoing_payload(
                 break
 
     outgoing['messages'] = [{"role": "system", "content": system_prompt}] + outgoing_messages
+
+    # 记录模型选择，便于排查前端传入模型名与上游模型不一致的问题。
+    if configured_model and incoming_model and configured_model != incoming_model:
+        print(
+            "检测到客户端模型与上游配置模型不一致，"
+            f"已使用 Relay.Model。incoming_model='{incoming_model}', "
+            f"relay_model='{configured_model}'"
+        )
 
     return outgoing
 

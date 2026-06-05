@@ -17,7 +17,13 @@ def load_config():
     except FileNotFoundError:
         return {
             "server": {"host": "0.0.0.0", "port": 10283, "debug": True, "threaded": True},
-            "routes": {"zotero": "/zotero", "anx_reader": "/anx-reader", "health": "/health", "index": "/"}
+            "routes": {
+                "zotero": "/zotero",
+                "chat_completions": "/chat/completions",
+                "anx_reader": "/anx-reader",
+                "health": "/health",
+                "index": "/"
+            }
         }
 
 def load_api_config():
@@ -631,6 +637,14 @@ def anx_reader_v1_chat_completions_proxy():
     功能与 /anx-reader 完全相同，只是路径不同。
     """
     return anx_reader_proxy()
+
+@app.route('/chat/completions', methods=['POST'])
+def chat_completions_proxy():
+    """Chat Completions 兼容代理端点
+
+    功能与 /zotero 完全相同，只是路径不同。
+    """
+    return zotero_proxy()
 
 @app.route('/health', methods=['GET'])
 def health_check():

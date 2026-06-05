@@ -8,6 +8,7 @@
   "routes": {
     "zotero": "/zotero",
     "zotero_json": "/zotero/json",
+    "chat_completions": "/chat/completions",
     "anx_reader": "/anx-reader",
     "health": "/health",
     "index": "/"

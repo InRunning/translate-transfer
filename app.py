@@ -453,7 +453,7 @@ def zotero_json_proxy():
         }), 500
 
 @app.route(config['routes']['zotero'], methods=['POST'])
-def zotero_proxy():
+def zotero_proxy(force_stream: Optional[bool] = None):
     """Zotero 代理端点
 
     - 判断最后一条 user 文本是单词还是句子，选择不同的 system 提示词。
@@ -514,6 +514,8 @@ def zotero_proxy():
             is_word_input,
             effective_user_text if is_word_input else None,
         )
+        if force_stream is not None:
+            outgoing['stream'] = force_stream
 
         # 验证构造的payload
         if not outgoing.get('model'):
@@ -638,13 +640,13 @@ def anx_reader_v1_chat_completions_proxy():
     """
     return anx_reader_proxy()
 
-@app.route('/chat/completions', methods=['POST'])
+@app.route(config['routes']['chat_completions'], methods=['POST'])
 def chat_completions_proxy():
     """Chat Completions 兼容代理端点
 
-    功能与 /zotero 完全相同，只是路径不同。
+    功能与 /zotero 基本相同，但强制使用非流式 HTTP 响应。
     """
-    return zotero_proxy()
+    return zotero_proxy(force_stream=False)
 
 @app.route('/health', methods=['GET'])
 def health_check():

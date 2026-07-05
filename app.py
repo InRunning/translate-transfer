@@ -17,7 +17,13 @@ def load_config():
     except FileNotFoundError:
         return {
             "server": {"host": "0.0.0.0", "port": 10283, "debug": True, "threaded": True},
-            "routes": {"zotero": "/zotero", "anx_reader": "/anx-reader", "health": "/health", "index": "/"}
+            "routes": {
+                "zotero": "/zotero",
+                "chat_completions": "/fine-translate/chat/completions",
+                "anx_reader": "/anx-reader",
+                "health": "/health",
+                "index": "/"
+            }
         }
 
 def load_api_config():
@@ -44,6 +50,10 @@ def normalize_word_text(text: str) -> str:
         char for char in text.strip()
         if not unicodedata.category(char).startswith('P')
     ).strip()
+
+def remove_line_breaks(text: str) -> str:
+    """移除响应内容中的换行，供要求单行输出的兼容接口使用。"""
+    return re.sub(r'[\r\n]+', ' ', text).strip()
 
 def extract_user_message_text(messages: List[Dict[str, str]]) -> Optional[str]:
     """从最后一条 user 消息中提取要翻译的文本。"""
@@ -132,7 +142,11 @@ def build_outgoing_payload(
 
     return outgoing
 
-def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Response:
+def proxy_deepseek(
+    payload: Dict[str, Any],
+    word: Optional[str] = None,
+    single_line_output: bool = False,
+) -> Response:
     """将请求代理到华为云 DeepSeek 接口，透传响应（含流式）。
 
     Args:
@@ -148,6 +162,7 @@ def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Respo
         if cached_result:
             # 直接使用缓存内容
             cache_content = cached_result['translation_result']
+            response_content = remove_line_breaks(cache_content) if single_line_output else cache_content
 
             # 检查是否需要流式响应
             want_stream = bool(payload.get('stream'))
@@ -172,7 +187,7 @@ def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Respo
                     yield f"data: {json.dumps(initial_chunk, ensure_ascii=False)}\n\n".encode('utf-8')
 
                     # 逐字符输出内容
-                    for char in cache_content:
+                    for char in response_content:
                         chunk = {
                             "id": initial_chunk["id"],
                             "object": "chat.completion.chunk",
@@ -204,7 +219,7 @@ def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Respo
                         "usage": {
                             "prompt_tokens": 78,
                             "total_tokens": 106,
-                            "completion_tokens": len(cache_content)
+                            "completion_tokens": len(response_content) # type: ignore
                         }
                     }
                     yield f"data: {json.dumps(final_chunk, ensure_ascii=False)}\n\n".encode('utf-8')
@@ -220,7 +235,7 @@ def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Respo
                     "choices": [{
                         "message": {
                             "role": "assistant",
-                            "content": cache_content
+                            "content": response_content
                         }
                     }]
                 }
@@ -325,8 +340,15 @@ def proxy_deepseek(payload: Dict[str, Any], word: Optional[str] = None) -> Respo
                     # 直接缓存完整的翻译结果
                     cache_word_translation(word, assistant_message)
 
+                if single_line_output:
+                    for choice in response_data['choices']:
+                        message = choice.get('message') if isinstance(choice, dict) else None
+                        content = message.get('content') if isinstance(message, dict) else None
+                        if isinstance(content, str):
+                            message['content'] = remove_line_breaks(content)
+
                 return Response(
-                    upstream.content,
+                    json.dumps(response_data, ensure_ascii=False) if single_line_output else upstream.content,
                     status=upstream.status_code,
                     content_type=upstream.headers.get('Content-Type', 'application/json')
                 )
@@ -447,7 +469,10 @@ def zotero_json_proxy():
         }), 500
 
 @app.route(config['routes']['zotero'], methods=['POST'])
-def zotero_proxy():
+def zotero_proxy(
+    force_stream: Optional[bool] = None,
+    single_line_output: bool = False,
+):
     """Zotero 代理端点
 
     - 判断最后一条 user 文本是单词还是句子，选择不同的 system 提示词。
@@ -508,6 +533,8 @@ def zotero_proxy():
             is_word_input,
             effective_user_text if is_word_input else None,
         )
+        if force_stream is not None:
+            outgoing['stream'] = force_stream
 
         # 验证构造的payload
         if not outgoing.get('model'):
@@ -519,7 +546,11 @@ def zotero_proxy():
         print(f"构造的payload: {outgoing}")
 
         # 代理到上游并按需流式输出，如果是单词则传递单词参数
-        return proxy_deepseek(outgoing, effective_user_text if is_word_input else None)
+        return proxy_deepseek(
+            outgoing,
+            effective_user_text if is_word_input else None,
+            single_line_output=single_line_output,
+        )
 
     except Exception as e:
         import traceback
@@ -631,6 +662,14 @@ def anx_reader_v1_chat_completions_proxy():
     功能与 /anx-reader 完全相同，只是路径不同。
     """
     return anx_reader_proxy()
+
+@app.route(config['routes']['chat_completions'], methods=['POST'])
+def chat_completions_proxy():
+    """Chat Completions 兼容代理端点
+
+    功能与 /zotero 基本相同，但强制使用非流式 HTTP 响应，并将输出压成一行。
+    """
+    return zotero_proxy(force_stream=False, single_line_output=True)
 
 @app.route('/health', methods=['GET'])
 def health_check():

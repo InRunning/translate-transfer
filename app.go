@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -13,6 +14,7 @@ type App struct {
 	db           *gorm.DB
 	httpClient   *http.Client
 	streamClient *http.Client
+	wordCache    sync.Map
 }
 
 func newApp(config AppConfig, localConfig *LocalConfig, db *gorm.DB) *App {

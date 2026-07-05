@@ -118,14 +118,29 @@ func (a *App) getCachedWord(word string) (string, bool) {
 		return "", false
 	}
 
-	var cache WordCache
+	lowerWord := strings.ToLower(word)
+	if value, ok := a.wordCache.Load(lowerWord); ok {
+		if translation, ok := value.(string); ok {
+			return translation, true
+		}
+	}
+
+	var translationResult string
 	err := a.db.WithContext(context.Background()).
-		Where("word = ?", strings.ToLower(word)).
-		First(&cache).Error
+		Model(&WordCache{}).
+		Select("translation_result").
+		Where("word = ?", lowerWord).
+		Limit(1).
+		Scan(&translationResult).Error
 	if err != nil {
 		return "", false
 	}
-	return cache.TranslationResult, true
+	if translationResult == "" {
+		return "", false
+	}
+
+	a.wordCache.Store(lowerWord, translationResult)
+	return translationResult, true
 }
 
 func (a *App) cacheWordTranslation(word, translationResult string) bool {
@@ -142,6 +157,7 @@ func (a *App) cacheWordTranslation(word, translationResult string) bool {
 			log.Printf("数据库错误: %v", err)
 			return false
 		}
+		a.wordCache.Store(lowerWord, translationResult)
 		return true
 	}
 
@@ -158,5 +174,6 @@ func (a *App) cacheWordTranslation(word, translationResult string) bool {
 		log.Printf("数据库错误: %v", err)
 		return false
 	}
+	a.wordCache.Store(lowerWord, translationResult)
 	return true
 }

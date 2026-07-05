@@ -14,6 +14,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const cachedStreamChunkRunes = 512
+
 func (a *App) proxyDeepSeek(c *gin.Context, payload map[string]interface{}, word string) {
 	cacheEnabled := a.cacheEnabled()
 	if word != "" && cacheEnabled {
@@ -124,6 +126,8 @@ func (a *App) proxyDeepSeek(c *gin.Context, payload map[string]interface{}, word
 
 func (a *App) writeCachedStream(c *gin.Context, payload map[string]interface{}, cacheContent string) {
 	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("X-Accel-Buffering", "no")
 	c.Status(http.StatusOK)
 
 	id := "chat-" + randomHex(4)
@@ -146,9 +150,11 @@ func (a *App) writeCachedStream(c *gin.Context, payload map[string]interface{}, 
 		}},
 		"usage": gin.H{"prompt_tokens": 0, "total_tokens": 0, "completion_tokens": 0},
 	}
-	writeSSE(c, initialChunk)
+	if !writeSSE(c, initialChunk) {
+		return
+	}
 
-	for _, char := range cacheContent {
+	for _, part := range chunkRunes(cacheContent, cachedStreamChunkRunes) {
 		chunk := gin.H{
 			"id":      id,
 			"object":  "chat.completion.chunk",
@@ -156,7 +162,7 @@ func (a *App) writeCachedStream(c *gin.Context, payload map[string]interface{}, 
 			"model":   model,
 			"choices": []gin.H{{
 				"index":         0,
-				"delta":         gin.H{"content": string(char)},
+				"delta":         gin.H{"content": part},
 				"logprobs":      nil,
 				"finish_reason": nil,
 			}},
@@ -252,4 +258,28 @@ func writeSSE(c *gin.Context, data interface{}) bool {
 	}
 	c.Writer.Flush()
 	return true
+}
+
+func chunkRunes(text string, size int) []string {
+	if text == "" {
+		return nil
+	}
+	if size <= 0 {
+		return []string{text}
+	}
+
+	runes := []rune(text)
+	if len(runes) <= size {
+		return []string{text}
+	}
+
+	chunks := make([]string, 0, (len(runes)+size-1)/size)
+	for start := 0; start < len(runes); start += size {
+		end := start + size
+		if end > len(runes) {
+			end = len(runes)
+		}
+		chunks = append(chunks, string(runes[start:end]))
+	}
+	return chunks
 }

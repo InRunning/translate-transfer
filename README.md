@@ -1,6 +1,6 @@
 # Translate Transfer - 大模型请求转发服务
 
-一个基于 Flask 的大模型请求转发服务，主要用于翻译功能，支持单词和句子的智能翻译，并支持流式响应。
+一个基于 Go + Gin 的大模型请求转发服务，主要用于翻译功能，支持单词和句子的智能翻译，并支持流式响应。
 
 ## 🚀 功能特性
 
@@ -14,8 +14,8 @@
 
 ## 📋 系统要求
 
-- Python 3.x
-- 虚拟环境支持 (venv)
+- Go 1.22+
+- MySQL 5.7+ / 8.0+
 - 网络连接（用于调用外部 API）
 
 ## 🛠️ 安装步骤
@@ -26,26 +26,12 @@ git clone <repository-url>
 cd translate-transfer
 ```
 
-### 2. 创建虚拟环境
+### 2. 安装依赖
 ```bash
-python3 -m venv venv
+go mod download
 ```
 
-### 3. 激活虚拟环境
-```bash
-# Linux/macOS
-source venv/bin/activate
-
-# Windows
-venv\Scripts\activate
-```
-
-### 4. 安装依赖
-```bash
-pip install -r requirements.txt
-```
-
-### 5. 配置 API 密钥
+### 3. 配置 API 密钥和 MySQL
 创建 `local.yaml` 文件并配置 API 密钥：
 
 ```yaml
@@ -57,12 +43,16 @@ Relay:
   Stream: True
   Cache: True
 
-# 单词缓存数据库配置（默认 SQLite）
 Database:
-  # mysql / sqlite / postgresql
-  Type: "sqlite"
-  Sqlite:
-    Path: "word_cache.db"
+  # Go 版本仅支持 mysql
+  Type: "mysql"
+  Mysql:
+    Host: "127.0.0.1"
+    Port: 3306
+    Dbname: "translate_transfer"
+    Username: "root"
+    Password: ""
+    Params: "charset=utf8mb4&parseTime=True&loc=Local"
 ```
 
 或者设置环境变量：
@@ -80,10 +70,10 @@ chmod +x start.sh
 
 ### 直接启动
 ```bash
-python3 app.py
+go run .
 ```
 
-服务将在 `http://localhost:10283` 启动。
+服务端口读取 `config.json` 的 `server.port`，当前配置为 `http://localhost:13234`。
 
 ## 📡 API 端点
 
@@ -94,7 +84,7 @@ python3 app.py
 
 **请求示例**：
 ```bash
-curl -X POST http://127.0.0.1:10283/zotero \
+curl -X POST http://127.0.0.1:13234/zotero \
   -H "Content-Type: application/json" \
   -d '{
     "model": "DeepSeek-V3",
@@ -128,7 +118,7 @@ curl -X POST http://127.0.0.1:10283/zotero \
 
 **请求示例**：
 ```bash
-curl http://127.0.0.1:10283/health
+curl http://127.0.0.1:13234/health
 ```
 
 **响应示例**：
@@ -145,7 +135,7 @@ curl http://127.0.0.1:10283/health
 
 **请求示例**：
 ```bash
-curl http://127.0.0.1:10283/
+curl http://127.0.0.1:13234/
 ```
 
 **响应示例**：
@@ -170,7 +160,7 @@ curl http://127.0.0.1:10283/
 {
   "server": {
     "host": "0.0.0.0",
-    "port": 10283,
+    "port": 13234,
     "debug": true,
     "threaded": true
   },
@@ -193,12 +183,8 @@ Relay:
   Cache: true                    # 是否启用单词翻译缓存
 
 Database:
-  # 选择：mysql / sqlite / postgresql
-  Type: "sqlite"
-
-  # SQLite 配置（Type=sqlite 时使用）
-  Sqlite:
-    Path: "word_cache.db"
+  # Go 版本仅支持 mysql
+  Type: "mysql"
 
   # MySQL 配置（Type=mysql 时使用）
   Mysql:
@@ -207,28 +193,18 @@ Database:
     Dbname: "translate_transfer"
     Username: "root"
     Password: ""
-    Params: "charset=utf8mb4"
-
-  # PostgreSQL 配置（Type=postgresql 时使用）
-  Postgresql:
-    Host: "127.0.0.1"
-    Port: 5432
-    Dbname: "translate_transfer"
-    Username: "postgres"
-    Password: ""
-    Params: "sslmode=disable"
+    Params: "charset=utf8mb4&parseTime=True&loc=Local"
 ```
 
 ### 环境变量
 
 - `DEEPSEEK_API_KEY`: 华为云 DeepSeek API 密钥
-- `FLASK_ENV`: Flask 运行环境（development/production）
 
 ## 🧪 测试
 
 ### 运行测试脚本
 ```bash
-python3 test_app.py
+go test ./...
 ```
 
 测试脚本会自动测试所有端点：
@@ -240,10 +216,10 @@ python3 test_app.py
 ### 手动测试
 ```bash
 # 测试健康检查
-curl http://localhost:10283/health
+curl http://localhost:13234/health
 
 # 测试翻译功能
-curl -X POST http://localhost:10283/zotero \
+curl -X POST http://localhost:13234/zotero \
   -H "Content-Type: application/json" \
   -d '{"model": "DeepSeek-V3", "messages": [{"role": "user", "content": "Hello"}], "temperature": 0, "stream": false}'
 ```
@@ -251,14 +227,13 @@ curl -X POST http://localhost:10283/zotero \
 ### 4. 缓存机制
 服务内置了智能缓存机制，专门针对单词翻译进行优化：
 
-- **自动缓存**：单词翻译结果会自动存储到配置的数据库中（默认 SQLite）
+- **自动缓存**：单词翻译结果会自动存储到配置的 MySQL 数据库中
 - **缓存命中**：相同单词的后续请求直接从缓存返回，无需调用上游 API
 - **流式缓存**：支持流式响应的缓存，模拟真实的流式输出体验
 - **缓存配置**：可通过 `Cache` 参数启用或禁用缓存功能
 
 **数据库支持**：
-- SQLite / MySQL / PostgreSQL 均可（通过 `local.yaml` 的 `Database.Type` 切换）
-- 使用 MySQL 或 PostgreSQL 时，请确保目标数据库已创建且安装了对应驱动（例如 PostgreSQL 常用 `psycopg2`/`psycopg`）
+- Go 版本仅支持 MySQL，请确保目标数据库已创建
 
 **缓存配置示例**：
 ```yaml
@@ -359,14 +334,14 @@ def is_word(text):
 
 3. **依赖安装失败**
    ```
-   解决：尝试更换 pip 源
-   pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+   解决：检查 Go 版本和网络代理，然后重新下载依赖
+   go mod download
    ```
 
 ### 日志查看
 启用 debug 模式查看详细日志：
 ```bash
-python3 app.py
+go run .
 ```
 
 ## 📄 许可证

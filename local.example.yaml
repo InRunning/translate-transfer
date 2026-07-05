@@ -7,12 +7,8 @@ Relay:
   Cache: True
 
 Database:
-  # 选择：mysql / sqlite / postgresql
-  Type: "sqlite"
-
-  # SQLite 配置（Type=sqlite 时使用）
-  Sqlite:
-    Path: "word_cache.db"
+  # Go 版本仅支持 mysql
+  Type: "mysql"
 
   # MySQL 配置（Type=mysql 时使用）
   Mysql:
@@ -22,12 +18,3 @@ Database:
     Username: "root"
     Password: ""
     Params: "charset=utf8mb4"
-
-  # PostgreSQL 配置（Type=postgresql 时使用）
-  Postgresql:
-    Host: "127.0.0.1"
-    Port: 5432
-    Dbname: "translate_transfer"
-    Username: "postgres"
-    Password: ""
-    Params: "sslmode=disable"

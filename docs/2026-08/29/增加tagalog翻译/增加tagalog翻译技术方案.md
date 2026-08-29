@@ -50,8 +50,8 @@
 
 单词：你是一个智能翻译助手。将下面的英文单词翻译为最常用的一个 Tagalog（Filipino）释义，并给出美式音标和英式音标。严格按以下格式输出：
 Tagalog：<最常用释义>
-美式音标：/<IPA>/
-英式音标：/<IPA>/
+American IPA：/<IPA>/
+British  IPA：/<IPA>/
 不要添加解释或思考过程。 ./no_think
 ```
 

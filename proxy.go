@@ -16,10 +16,10 @@ import (
 
 const cachedStreamChunkRunes = 512
 
-func (a *App) proxyDeepSeek(c *gin.Context, payload map[string]interface{}, word string) {
+func (a *App) proxyDeepSeek(c *gin.Context, payload map[string]interface{}, targetLanguage, word string) {
 	cacheEnabled := a.cacheEnabled()
 	if word != "" && cacheEnabled {
-		if cacheContent, found := a.getCachedWord(word); found {
+		if cacheContent, found := a.getCachedWord(targetLanguage, word); found {
 			if boolValue(payload["stream"]) {
 				a.writeCachedStream(c, payload, cacheContent)
 				return
@@ -90,7 +90,7 @@ func (a *App) proxyDeepSeek(c *gin.Context, payload map[string]interface{}, word
 	}
 
 	if wantStream {
-		a.proxyStream(c, upstream, word, cacheEnabled)
+		a.proxyStream(c, upstream, targetLanguage, word, cacheEnabled)
 		return
 	}
 
@@ -104,9 +104,9 @@ func (a *App) proxyDeepSeek(c *gin.Context, payload map[string]interface{}, word
 	if err := json.Unmarshal(responseBody, &responseData); err == nil {
 		if choices, ok := responseData["choices"].([]interface{}); ok && len(choices) > 0 {
 			if word != "" && cacheEnabled {
-				if _, found := a.getCachedWord(word); !found {
+				if _, found := a.getCachedWord(targetLanguage, word); !found {
 					if assistantMessage := assistantContent(choices[0]); assistantMessage != "" {
-						a.cacheWordTranslation(word, assistantMessage)
+						a.cacheWordTranslation(targetLanguage, word, assistantMessage)
 					}
 				}
 			}
@@ -194,7 +194,7 @@ func (a *App) writeCachedStream(c *gin.Context, payload map[string]interface{}, 
 	writeSSE(c, finalChunk)
 }
 
-func (a *App) proxyStream(c *gin.Context, upstream *http.Response, word string, cacheEnabled bool) {
+func (a *App) proxyStream(c *gin.Context, upstream *http.Response, targetLanguage, word string, cacheEnabled bool) {
 	contentType := upstream.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = "text/event-stream"
@@ -245,8 +245,8 @@ func (a *App) proxyStream(c *gin.Context, upstream *http.Response, word string, 
 	}
 
 	if word != "" && translationBuffer.Len() > 0 && cacheEnabled {
-		if _, found := a.getCachedWord(word); !found {
-			a.cacheWordTranslation(word, translationBuffer.String())
+		if _, found := a.getCachedWord(targetLanguage, word); !found {
+			a.cacheWordTranslation(targetLanguage, word, translationBuffer.String())
 		}
 	}
 }

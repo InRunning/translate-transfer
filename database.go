@@ -29,7 +29,8 @@ type DatabaseConfig struct {
 
 type WordCache struct {
 	ID                uint      `gorm:"primaryKey;autoIncrement;column:id"`
-	Word              string    `gorm:"column:word;type:varchar(100);not null;uniqueIndex;index:idx_word"`
+	Word              string    `gorm:"column:word;type:varchar(100);not null;uniqueIndex:uniq_target_language_word;index:idx_word"`
+	TargetLanguage    string    `gorm:"column:target_language;type:varchar(16);not null;uniqueIndex:uniq_target_language_word"`
 	TranslationResult string    `gorm:"column:translation_result;type:text;not null"`
 	CreatedAt         time.Time `gorm:"column:created_at;autoCreateTime"`
 	UpdatedAt         time.Time `gorm:"column:updated_at;autoUpdateTime"`
@@ -113,13 +114,18 @@ func (a *App) cacheEnabled() bool {
 	return a.localConfig != nil && (a.localConfig.Relay.Cache == nil || *a.localConfig.Relay.Cache)
 }
 
-func (a *App) getCachedWord(word string) (string, bool) {
+func wordCacheKey(targetLanguage, word string) string {
+	return strings.ToLower(strings.TrimSpace(targetLanguage)) + ":" + strings.ToLower(strings.TrimSpace(word))
+}
+
+func (a *App) getCachedWord(targetLanguage, word string) (string, bool) {
 	if a.db == nil {
 		return "", false
 	}
 
 	lowerWord := strings.ToLower(word)
-	if value, ok := a.wordCache.Load(lowerWord); ok {
+	cacheKey := wordCacheKey(targetLanguage, lowerWord)
+	if value, ok := a.wordCache.Load(cacheKey); ok {
 		if translation, ok := value.(string); ok {
 			return translation, true
 		}
@@ -129,7 +135,7 @@ func (a *App) getCachedWord(word string) (string, bool) {
 	err := a.db.WithContext(context.Background()).
 		Model(&WordCache{}).
 		Select("translation_result").
-		Where("word = ?", lowerWord).
+		Where("target_language = ? AND word = ?", targetLanguage, lowerWord).
 		Limit(1).
 		Scan(&translationResult).Error
 	if err != nil {
@@ -139,25 +145,26 @@ func (a *App) getCachedWord(word string) (string, bool) {
 		return "", false
 	}
 
-	a.wordCache.Store(lowerWord, translationResult)
+	a.wordCache.Store(cacheKey, translationResult)
 	return translationResult, true
 }
 
-func (a *App) cacheWordTranslation(word, translationResult string) bool {
+func (a *App) cacheWordTranslation(targetLanguage, word, translationResult string) bool {
 	if a.db == nil {
 		return false
 	}
 
 	lowerWord := strings.ToLower(word)
+	cacheKey := wordCacheKey(targetLanguage, lowerWord)
 	var cache WordCache
-	err := a.db.WithContext(context.Background()).Where("word = ?", lowerWord).First(&cache).Error
+	err := a.db.WithContext(context.Background()).Where("target_language = ? AND word = ?", targetLanguage, lowerWord).First(&cache).Error
 	if err == nil {
 		cache.TranslationResult = translationResult
 		if err := a.db.Save(&cache).Error; err != nil {
 			log.Printf("数据库错误: %v", err)
 			return false
 		}
-		a.wordCache.Store(lowerWord, translationResult)
+		a.wordCache.Store(cacheKey, translationResult)
 		return true
 	}
 
@@ -168,12 +175,13 @@ func (a *App) cacheWordTranslation(word, translationResult string) bool {
 
 	cache = WordCache{
 		Word:              lowerWord,
+		TargetLanguage:    targetLanguage,
 		TranslationResult: translationResult,
 	}
 	if err := a.db.Create(&cache).Error; err != nil {
 		log.Printf("数据库错误: %v", err)
 		return false
 	}
-	a.wordCache.Store(lowerWord, translationResult)
+	a.wordCache.Store(cacheKey, translationResult)
 	return true
 }

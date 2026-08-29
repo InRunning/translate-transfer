@@ -128,6 +128,22 @@ curl http://127.0.0.1:13234/health
 }
 ```
 
+### Tagalog（菲律宾语）翻译端点
+
+Anx Reader 可使用以下 OpenAI 兼容路径获取 Tagalog（Filipino）翻译：
+
+- `/anx-reader-tagalog`
+- `/anx-reader-tagalog/chat/completions`
+- `/anx-reader-tagalog/v1/chat/completions`
+
+```bash
+curl -X POST http://127.0.0.1:13234/anx-reader-tagalog \
+  -H "Content-Type: application/json" \
+  -d '{"model":"DeepSeek-V3","messages":[{"role":"user","content":"I want to go home"}],"stream":false}'
+```
+
+单词缓存按目标语言隔离；同一英文单词在中文和 Tagalog 端点会分别缓存。
+
 ### 3. 服务信息端点
 - **路径**: `/`
 - **方法**: `GET`

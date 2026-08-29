@@ -11,23 +11,33 @@ func (a *App) registerRoutes(router *gin.Engine) {
 	zoteroRoute := a.route("zotero", "/zotero")
 	zoteroJSONRoute := a.route("zotero_json", "/zotero/json")
 	anxReaderRoute := a.route("anx_reader", "/anx-reader")
+	anxReaderTagalogRoute := a.route("anx_reader_tagalog", "/anx-reader-tagalog")
 	healthRoute := a.route("health", "/health")
 	indexRoute := a.route("index", "/")
 
 	router.POST(zoteroRoute, func(c *gin.Context) {
-		a.translationProxy(c, "Zotero", false)
+		a.translationProxy(c, "Zotero", chineseTranslationProfile, false)
 	})
 	router.POST(zoteroJSONRoute, func(c *gin.Context) {
-		a.translationProxy(c, "Zotero JSON", true)
+		a.translationProxy(c, "Zotero JSON", chineseTranslationProfile, true)
 	})
 	router.POST(anxReaderRoute, func(c *gin.Context) {
-		a.translationProxy(c, "Anx-Reader", false)
+		a.translationProxy(c, "Anx-Reader", chineseTranslationProfile, false)
 	})
-	router.POST("/anx-reader/chat/completions", func(c *gin.Context) {
-		a.translationProxy(c, "Anx-Reader", false)
+	router.POST(anxReaderRoute+"/chat/completions", func(c *gin.Context) {
+		a.translationProxy(c, "Anx-Reader", chineseTranslationProfile, false)
 	})
-	router.POST("/anx-reader/v1/chat/completions", func(c *gin.Context) {
-		a.translationProxy(c, "Anx-Reader", false)
+	router.POST(anxReaderRoute+"/v1/chat/completions", func(c *gin.Context) {
+		a.translationProxy(c, "Anx-Reader", chineseTranslationProfile, false)
+	})
+	router.POST(anxReaderTagalogRoute, func(c *gin.Context) {
+		a.translationProxy(c, "Anx-Reader Tagalog", tagalogTranslationProfile, false)
+	})
+	router.POST(anxReaderTagalogRoute+"/chat/completions", func(c *gin.Context) {
+		a.translationProxy(c, "Anx-Reader Tagalog", tagalogTranslationProfile, false)
+	})
+	router.POST(anxReaderTagalogRoute+"/v1/chat/completions", func(c *gin.Context) {
+		a.translationProxy(c, "Anx-Reader Tagalog", tagalogTranslationProfile, false)
 	})
 	router.GET(healthRoute, func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "healthy"})

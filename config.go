@@ -38,11 +38,12 @@ func defaultConfig() AppConfig {
 	cfg.Server.Debug = true
 	cfg.Server.Threaded = true
 	cfg.Routes = map[string]string{
-		"zotero":      "/zotero",
-		"zotero_json": "/zotero/json",
-		"anx_reader":  "/anx-reader",
-		"health":      "/health",
-		"index":       "/",
+		"zotero":             "/zotero",
+		"zotero_json":        "/zotero/json",
+		"anx_reader":         "/anx-reader",
+		"anx_reader_tagalog": "/anx-reader-tagalog",
+		"health":             "/health",
+		"index":              "/",
 	}
 	return cfg
 }

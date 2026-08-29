@@ -10,6 +10,7 @@
     "zotero_json": "/zotero/json",
     "chat_completions": "/fine-translate/chat/completions",
     "anx_reader": "/anx-reader",
+    "anx_reader_tagalog": "/anx-reader-tagalog",
     "health": "/health",
     "index": "/"
   },

@@ -11,7 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func (a *App) translationProxy(c *gin.Context, name string, forceNonStream bool) {
+func (a *App) translationProxy(c *gin.Context, name string, profile TranslationProfile, forceNonStream bool) {
 	rawContent, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "details": "读取请求体失败"})
@@ -66,7 +66,7 @@ func (a *App) translationProxy(c *gin.Context, name string, forceNonStream bool)
 		cacheEnabled := a.cacheEnabled()
 		log.Printf("缓存启用状态: %t", cacheEnabled)
 		if cacheEnabled {
-			_, found := a.getCachedWord(effectiveUserText)
+			_, found := a.getCachedWord(profile.TargetLanguage, effectiveUserText)
 			if found {
 				log.Println("缓存检查结果: 命中")
 			} else {
@@ -75,7 +75,7 @@ func (a *App) translationProxy(c *gin.Context, name string, forceNonStream bool)
 		}
 	}
 
-	outgoing, err := a.buildOutgoingPayload(incoming, isWordInput, userTextOverride(isWordInput, effectiveUserText))
+	outgoing, err := a.buildOutgoingPayload(incoming, profile, isWordInput, userTextOverride(isWordInput, effectiveUserText))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -97,5 +97,5 @@ func (a *App) translationProxy(c *gin.Context, name string, forceNonStream bool)
 	if isWordInput {
 		word = effectiveUserText
 	}
-	a.proxyDeepSeek(c, outgoing, word)
+	a.proxyDeepSeek(c, outgoing, profile.TargetLanguage, word)
 }

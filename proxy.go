@@ -144,7 +144,7 @@ func (a *App) writeCachedStream(c *gin.Context, payload map[string]interface{}, 
 		"model":   model,
 		"choices": []gin.H{{
 			"index":         0,
-			"delta":         gin.H{"content": ""},
+			"delta":         gin.H{"role": "assistant", "content": ""},
 			"logprobs":      nil,
 			"finish_reason": nil,
 		}},
@@ -198,14 +198,16 @@ func (a *App) writeCachedStream(c *gin.Context, payload map[string]interface{}, 
 }
 
 func (a *App) proxyStream(c *gin.Context, upstream *http.Response, targetLanguage, word string, cacheEnabled bool) {
-	contentType := upstream.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = "text/event-stream"
-	}
-	c.Header("Content-Type", contentType)
+	// A client that requested stream=true must always receive an SSE response,
+	// even when an upstream proxy omits or mislabels its Content-Type header.
+	c.Header("Content-Type", "text/event-stream; charset=utf-8")
+	c.Header("Cache-Control", "no-cache, no-transform")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
 	c.Status(http.StatusOK)
 
 	var translationBuffer strings.Builder
+	receivedDone := false
 	scanner := bufio.NewScanner(upstream.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
@@ -224,7 +226,11 @@ func (a *App) proxyStream(c *gin.Context, upstream *http.Response, targetLanguag
 			continue
 		}
 		dataStr = strings.TrimSpace(dataStr)
-		if dataStr == "" || dataStr == "[DONE]" {
+		if dataStr == "" {
+			continue
+		}
+		if dataStr == "[DONE]" {
+			receivedDone = true
 			continue
 		}
 
@@ -248,6 +254,13 @@ func (a *App) proxyStream(c *gin.Context, upstream *http.Response, targetLanguag
 		_, _ = c.Writer.Write([]byte(errorChunk))
 		c.Writer.Flush()
 		return
+	}
+	// Some OpenAI-compatible upstreams end on a finish_reason chunk but omit
+	// the final marker. Emit it here so clients waiting for [DONE] do not hang.
+	if !receivedDone {
+		if !writeSSEDone(c) {
+			return
+		}
 	}
 
 	if word != "" && translationBuffer.Len() > 0 && cacheEnabled {

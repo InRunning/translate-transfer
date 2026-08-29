@@ -25,11 +25,30 @@ func TestProxyStreamRelaysSSEEventBoundariesAndDone(t *testing.T) {
 
 	newApp(defaultConfig(), nil, nil).proxyStream(context, upstream, "tl", "", false)
 
-	if got, want := response.Header().Get("Content-Type"), "text/event-stream"; got != want {
+	if got, want := response.Header().Get("Content-Type"), "text/event-stream; charset=utf-8"; got != want {
 		t.Fatalf("Content-Type = %q, want %q", got, want)
 	}
 	want := "data: {\"choices\":[{\"delta\":{\"content\":\"Kamusta\"}}]}\n\n" +
 		"data: {\"choices\":[{\"delta\":{\"content\":\"!\"}}]}\n\n" +
+		"data: [DONE]\n\n"
+	if got := response.Body.String(); got != want {
+		t.Fatalf("SSE response = %q, want %q", got, want)
+	}
+}
+
+func TestProxyStreamAppendsDoneWhenUpstreamOmitsIt(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	response := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(response)
+	upstream := &http.Response{
+		Body: io.NopCloser(strings.NewReader(
+			"data: {\"choices\":[{\"delta\":{\"content\":\"halimbawa\"},\"finish_reason\":\"stop\"}]}\n\n",
+		)),
+	}
+
+	newApp(defaultConfig(), nil, nil).proxyStream(context, upstream, "tl", "", false)
+
+	want := "data: {\"choices\":[{\"delta\":{\"content\":\"halimbawa\"},\"finish_reason\":\"stop\"}]}\n\n" +
 		"data: [DONE]\n\n"
 	if got := response.Body.String(); got != want {
 		t.Fatalf("SSE response = %q, want %q", got, want)
@@ -51,5 +70,8 @@ func TestWriteCachedStreamEndsWithDone(t *testing.T) {
 	}
 	if !strings.Contains(body, `"content":"halimbawa"`) {
 		t.Fatalf("cached SSE response must include cached translation, got %q", body)
+	}
+	if !strings.Contains(body, `"role":"assistant"`) {
+		t.Fatalf("cached SSE response must include assistant role, got %q", body)
 	}
 }

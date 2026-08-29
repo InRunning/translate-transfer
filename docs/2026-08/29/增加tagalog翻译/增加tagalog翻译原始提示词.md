@@ -1,0 +1,1 @@
+仿造已有的 /anx-reader 端口，增加 /anx-reader-tagalog 端口，对应中文翻译替换成tagalog的翻译，给出技术方案文档

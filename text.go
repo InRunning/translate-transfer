@@ -39,8 +39,13 @@ func extractUserMessageText(messages []interface{}) string {
 }
 
 func normalizeWordText(text string) string {
+	text = strings.TrimSpace(text)
+	if beforeBullet, _, found := strings.Cut(text, "•"); found {
+		text = beforeBullet
+	}
+
 	var b strings.Builder
-	for _, r := range strings.TrimSpace(text) {
+	for _, r := range text {
 		if unicode.IsPunct(r) {
 			continue
 		}

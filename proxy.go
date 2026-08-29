@@ -191,7 +191,10 @@ func (a *App) writeCachedStream(c *gin.Context, payload map[string]interface{}, 
 			"completion_tokens": len([]rune(cacheContent)),
 		},
 	}
-	writeSSE(c, finalChunk)
+	if !writeSSE(c, finalChunk) {
+		return
+	}
+	writeSSEDone(c)
 }
 
 func (a *App) proxyStream(c *gin.Context, upstream *http.Response, targetLanguage, word string, cacheEnabled bool) {
@@ -207,13 +210,21 @@ func (a *App) proxyStream(c *gin.Context, upstream *http.Response, targetLanguag
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if !strings.HasPrefix(line, "data: ") || len(line) <= 6 {
+		// SSE uses a blank line to delimit events. Relay every line verbatim so
+		// OpenAI-compatible clients receive the same event boundaries and [DONE]
+		// marker as they would from the upstream service.
+		line := scanner.Text()
+		if _, err := c.Writer.Write([]byte(line + "\n")); err != nil {
+			return
+		}
+		c.Writer.Flush()
+
+		dataStr, isData := strings.CutPrefix(line, "data:")
+		if !isData {
 			continue
 		}
-
-		dataStr := strings.TrimSpace(line[6:])
-		if dataStr == "[DONE]" {
+		dataStr = strings.TrimSpace(dataStr)
+		if dataStr == "" || dataStr == "[DONE]" {
 			continue
 		}
 
@@ -230,11 +241,6 @@ func (a *App) proxyStream(c *gin.Context, upstream *http.Response, targetLanguag
 		if content := deltaContent(choices[0]); content != "" {
 			translationBuffer.WriteString(content)
 		}
-
-		if _, err := c.Writer.Write([]byte(line + "\n")); err != nil {
-			return
-		}
-		c.Writer.Flush()
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -254,6 +260,14 @@ func (a *App) proxyStream(c *gin.Context, upstream *http.Response, targetLanguag
 func writeSSE(c *gin.Context, data interface{}) bool {
 	line := fmt.Sprintf("data: %s\n\n", string(mustJSONBytes(data)))
 	if _, err := c.Writer.Write([]byte(line)); err != nil {
+		return false
+	}
+	c.Writer.Flush()
+	return true
+}
+
+func writeSSEDone(c *gin.Context) bool {
+	if _, err := c.Writer.Write([]byte("data: [DONE]\n\n")); err != nil {
 		return false
 	}
 	c.Writer.Flush()

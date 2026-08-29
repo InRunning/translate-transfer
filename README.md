@@ -144,6 +144,8 @@ curl -X POST http://127.0.0.1:13234/anx-reader-tagalog \
 
 单词缓存按目标语言隔离；同一英文单词在中文和 Tagalog 端点会分别缓存。
 
+上述三个端点同时支持 `"stream": true` 的 SSE 响应。单词缓存命中时，服务会以 OpenAI 兼容的 SSE chunk 返回缓存内容，并以 `data: [DONE]` 结束；未命中时会原样转发上游 SSE 事件并在流结束后写入缓存。
+
 ### 3. 服务信息端点
 - **路径**: `/`
 - **方法**: `GET`
